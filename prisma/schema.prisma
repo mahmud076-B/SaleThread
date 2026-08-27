@@ -1,0 +1,155 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum ChannelType {
+  messenger
+  instagram
+}
+
+enum ConversationStatus {
+  sold
+  lost
+  pending
+}
+
+enum MessageSender {
+  customer
+  business
+  ai_draft
+}
+
+enum ComplianceState {
+  send_now
+  needs_human_agent_tag
+  needs_template
+  blocked
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  business     Business?
+}
+
+model Business {
+  id           String    @id @default(cuid())
+  name         String
+  ownerEmail   String    @unique
+  createdAt    DateTime  @default(now())
+
+  // Auth relation
+  user         User?     @relation(fields: [ownerEmail], references: [email])
+
+  // Child relations
+  channels     Channel[]
+  customers    Customer[]
+  conversations Conversation[]
+  catalogItems ProductCatalogItem[]
+}
+
+model Channel {
+  id          String      @id @default(cuid())
+  businessId  String
+  type        ChannelType
+  displayName String
+  connected   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  
+  pageId      String?
+  instagramId String?
+  accessToken String?
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([businessId])
+}
+
+model Customer {
+  id          String      @id @default(cuid())
+  businessId  String
+  name        String
+  channelType ChannelType
+  externalId  String      // placeholder — will store real platform user ID later
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([businessId, channelType, externalId])
+  @@index([businessId])
+}
+
+model Conversation {
+  id             String             @id @default(cuid())
+  businessId     String
+  customerId     String
+  channelId      String
+  status         ConversationStatus
+  reason         String?
+  estimatedValue Decimal?           @db.Decimal(10, 2)
+  lastMessageAt  DateTime
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  followUpDrafts FollowUpDraft[]
+
+  @@index([businessId])
+  @@index([customerId])
+  @@index([channelId])
+  @@index([status])
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  sender         MessageSender
+  content        String        @db.Text
+  sentAt         DateTime
+  externalId     String?       @unique
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model ProductCatalogItem {
+  id         String  @id @default(cuid())
+  businessId String
+  name       String
+  price      Decimal @db.Decimal(10, 2)
+  stockNote  String?
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model FollowUpDraft {
+  id              String          @id @default(cuid())
+  conversationId  String
+  draftText       String          @db.Text
+  complianceState ComplianceState
+  createdAt       DateTime        @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
