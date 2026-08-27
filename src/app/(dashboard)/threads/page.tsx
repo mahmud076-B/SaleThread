@@ -22,7 +22,10 @@ export default async function ThreadsPage() {
         take: 50,
       },
     },
-    orderBy: { lastMessageAt: "desc" },
+    orderBy: [
+      { isUnread: "desc" },
+      { lastMessageAt: "desc" },
+    ],
   });
 
   // Serialise Decimal → string for client component
@@ -30,6 +33,7 @@ export default async function ThreadsPage() {
     ...c,
     estimatedValue: c.estimatedValue ? c.estimatedValue.toString() : null,
     lastMessageAt: c.lastMessageAt.toISOString(),
+    isUnread: c.isUnread,
     messages: c.messages.map((m) => ({ ...m, sentAt: m.sentAt.toISOString() })),
   }));
 

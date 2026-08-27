@@ -9,9 +9,10 @@ type ConversationRow = {
   reason: string | null;
   estimatedValue: string | null;
   lastMessageAt: string;
-  customer: { name: string };
+  isUnread: boolean;
+  customer: { name: string; externalId: string };
   channel: { type: ChannelType; displayName: string };
-  messages: { id: string; content: string; sender: string; sentAt: string }[];
+  messages: { id: string; content: string; sender: string; sentAt: string; isFailed?: boolean }[];
 };
 
 const STATUS_STYLES: Record<ConversationStatus, string> = {
@@ -36,6 +37,16 @@ function formatRelativeTime(isoString: string) {
   return `${days}d ago`;
 }
 
+function formatFullTime(isoString: string) {
+  return new Date(isoString).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function ThreadsClient({ conversations: initialConversations }: { conversations: ConversationRow[] }) {
   const [conversations, setConversations] = useState<ConversationRow[]>(initialConversations);
   const [activeStatus, setActiveStatus] = useState<ConversationStatus | "all">("all");
@@ -45,7 +56,6 @@ export function ThreadsClient({ conversations: initialConversations }: { convers
   // Composer state
   const [replyText, setReplyText] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
 
   // Sync state if props change (e.g. Next.js refresh)
   useEffect(() => {
@@ -64,17 +74,39 @@ export function ThreadsClient({ conversations: initialConversations }: { convers
     });
   }, [conversations, activeStatus, search]);
 
-  const handleSendReply = async (conversationId: string) => {
-    if (!replyText.trim() || isSending) return;
+  const markAsRead = async (conversationId: string) => {
+    try {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, isUnread: false } : c))
+      );
+      await fetch(`/api/conversations/${conversationId}/read`, { method: "PATCH" });
+    } catch (err) {
+      console.error("Failed to mark as read:", err);
+    }
+  };
+
+  const handleSendReply = async (conversationId: string, textToSend: string, retryId?: string) => {
+    if (!textToSend.trim() || isSending) return;
 
     setIsSending(true);
-    setSendError(null);
+
+    // If it's a retry, we remove the failed message first
+    if (retryId) {
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === conversationId) {
+            return { ...c, messages: c.messages.filter((m) => m.id !== retryId) };
+          }
+          return c;
+        })
+      );
+    }
 
     try {
       const res = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: replyText.trim() }),
+        body: JSON.stringify({ text: textToSend.trim() }),
       });
 
       const data = await res.json();
@@ -83,23 +115,45 @@ export function ThreadsClient({ conversations: initialConversations }: { convers
         throw new Error(data.error || "Failed to send message");
       }
 
-      // Append message locally
+      // Append success message locally
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id === conversationId) {
             return {
               ...c,
               lastMessageAt: data.data.sentAt,
-              messages: [data.data, ...c.messages], // Insert at beginning since orderBy is desc
+              messages: [data.data, ...c.messages],
             };
           }
           return c;
         })
       );
 
-      setReplyText("");
+      // Only clear text if it wasn't a retry, or if it was a retry and the text was identical
+      if (!retryId || textToSend === replyText) {
+        setReplyText("");
+      }
     } catch (err: any) {
-      setSendError(err.message || "An unexpected error occurred");
+      // Append FAILED message locally
+      const failedMessage = {
+        id: `failed-${Date.now()}`,
+        content: textToSend.trim(),
+        sender: "business",
+        sentAt: new Date().toISOString(),
+        isFailed: true,
+      };
+
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === conversationId) {
+            return {
+              ...c,
+              messages: [failedMessage, ...c.messages],
+            };
+          }
+          return c;
+        })
+      );
     } finally {
       setIsSending(false);
     }
@@ -153,113 +207,154 @@ export function ThreadsClient({ conversations: initialConversations }: { convers
               >
                 {/* Header (Click to expand) */}
                 <div
-                  className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                  className={`p-4 cursor-pointer transition-colors ${c.isUnread ? 'bg-blue-50/50 hover:bg-blue-50' : 'hover:bg-gray-50'}`}
                   onClick={() => {
                     if (isExpanded) {
                       setExpandedId(null);
                     } else {
                       setExpandedId(c.id);
                       setReplyText("");
-                      setSendError(null);
+                      if (c.isUnread) markAsRead(c.id);
                     }
                   }}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm text-gray-900 truncate">
-                        {c.customer.name}
-                      </p>
-                      <div className="flex gap-1.5 mt-1 flex-wrap">
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[c.status]}`}
-                        >
-                          {c.status}
-                        </span>
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${CHANNEL_STYLES[c.channel.type]}`}
-                        >
-                          {c.channel.type}
-                        </span>
+                    <div className="min-w-0 flex items-center gap-2">
+                      {c.isUnread && (
+                        <span className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" />
+                      )}
+                      <div>
+                        <p className={`text-sm truncate ${c.isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
+                          {c.customer.name}
+                        </p>
+                        <div className="flex gap-1.5 mt-1 flex-wrap">
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[c.status]}`}
+                          >
+                            {c.status}
+                          </span>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-medium ${CHANNEL_STYLES[c.channel.type]}`}
+                          >
+                            {c.channel.type}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">
                       {c.estimatedValue && (
-                        <p className="text-sm font-semibold text-gray-900">
+                        <p className={`text-sm ${c.isUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-900'}`}>
                           ৳{Number(c.estimatedValue).toLocaleString()}
                         </p>
                       )}
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className={`text-xs mt-0.5 ${c.isUnread ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
                         {formatRelativeTime(c.lastMessageAt)}
                       </p>
                     </div>
                   </div>
                   {c.reason && (
-                    <p className="text-xs text-gray-500 line-clamp-2 mt-2">{c.reason}</p>
+                    <p className={`text-xs line-clamp-2 mt-2 ${c.isUnread ? 'text-gray-700 font-medium' : 'text-gray-500'}`}>{c.reason}</p>
                   )}
                 </div>
 
                 {/* Expanded Content */}
                 {isExpanded && (
-                  <div className="border-t border-gray-200 bg-gray-50 p-4 flex flex-col">
-                    <div className="flex-1 overflow-y-auto max-h-64 space-y-3 mb-4 flex flex-col-reverse">
+                  <div className="border-t border-gray-200 bg-gray-50 flex flex-col">
+                    
+                    {/* Customer Info Panel */}
+                    <div className="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center text-sm shadow-sm z-10">
+                      <div>
+                        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Customer</p>
+                        <p className="font-medium text-gray-900">{c.customer.name}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Source</p>
+                        <p className="font-medium text-gray-900">{c.channel.displayName}</p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 flex-1 overflow-y-auto max-h-80 space-y-3 mb-4 flex flex-col-reverse">
                       {c.messages.map((msg) => {
                         const isBusiness = msg.sender === "business" || msg.sender === "ai_draft";
                         return (
                           <div
                             key={msg.id}
-                            className={`max-w-[80%] rounded-lg p-3 text-sm ${
+                            className={`max-w-[85%] rounded-lg p-3 text-sm ${
                               isBusiness
-                                ? "bg-blue-600 text-white self-end rounded-tr-none"
+                                ? msg.isFailed 
+                                  ? "bg-red-50 border border-red-200 text-red-900 self-end rounded-tr-none" 
+                                  : "bg-blue-600 text-white self-end rounded-tr-none"
                                 : "bg-white border border-gray-200 text-gray-900 self-start rounded-tl-none shadow-sm"
                             }`}
                           >
                             <p className="whitespace-pre-wrap">{msg.content}</p>
-                            <p
-                              className={`text-[10px] mt-1 ${
-                                isBusiness ? "text-blue-200" : "text-gray-400"
-                              }`}
-                            >
-                              {new Date(msg.sentAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </p>
+                            
+                            <div className={`flex items-center justify-between mt-1 gap-4 ${isBusiness ? (msg.isFailed ? 'text-red-500' : 'text-blue-200') : 'text-gray-400'}`}>
+                              <p className="text-[10px]">
+                                {formatFullTime(msg.sentAt)}
+                              </p>
+                              {msg.isFailed && (
+                                <button 
+                                  onClick={() => handleSendReply(c.id, msg.content, msg.id)}
+                                  disabled={isSending}
+                                  className="text-[11px] font-bold underline hover:text-red-700 disabled:opacity-50"
+                                >
+                                  Retry
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
                     </div>
 
                     {/* Composer */}
-                    {c.channel.type === "messenger" ? (
-                      <div className="mt-auto bg-white rounded-lg border border-gray-200 p-2 shadow-sm">
-                        <textarea
-                          placeholder="Type a reply..."
-                          className="w-full text-sm resize-none border-none focus:ring-0 p-2 text-gray-900 bg-transparent"
-                          rows={2}
-                          value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
-                          disabled={isSending}
-                        />
-                        <div className="flex items-center justify-between mt-2 px-2">
-                          <p className="text-xs text-red-500 font-medium">{sendError}</p>
-                          <button
-                            onClick={() => handleSendReply(c.id)}
-                            disabled={!replyText.trim() || isSending}
-                            className={`px-4 py-1.5 text-sm font-medium text-white rounded-md transition-colors ${
-                              !replyText.trim() || isSending
-                                ? "bg-blue-300 cursor-not-allowed"
-                                : "bg-blue-600 hover:bg-blue-700"
-                            }`}
-                          >
-                            {isSending ? "Sending..." : "Send Reply"}
-                          </button>
+                    <div className="p-4 pt-0">
+                      {c.channel.type === "messenger" ? (
+                        <div className="bg-white rounded-lg border border-gray-200 p-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-500 transition-shadow">
+                          <textarea
+                            placeholder="Type a reply..."
+                            className="w-full text-sm resize-none border-none focus:ring-0 p-2 text-gray-900 bg-transparent"
+                            rows={2}
+                            value={replyText}
+                            onChange={(e) => setReplyText(e.target.value)}
+                            disabled={isSending}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSendReply(c.id, replyText);
+                              }
+                            }}
+                          />
+                          <div className="flex items-center justify-between mt-2 px-2">
+                            <p className="text-xs text-gray-400">Press Enter to send, Shift+Enter for new line</p>
+                            <button
+                              onClick={() => handleSendReply(c.id, replyText)}
+                              disabled={!replyText.trim() || isSending}
+                              className={`px-4 py-1.5 text-sm font-medium text-white rounded-md transition-all flex items-center gap-2 ${
+                                !replyText.trim() || isSending
+                                  ? "bg-blue-300 cursor-not-allowed"
+                                  : "bg-blue-600 hover:bg-blue-700 shadow-sm"
+                              }`}
+                            >
+                              {isSending ? (
+                                <>
+                                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Sending...
+                                </>
+                              ) : "Send Reply"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-500 text-center py-2">
-                        Replies are currently only supported for Messenger channels.
-                      </p>
-                    )}
+                      ) : (
+                        <p className="text-xs text-gray-500 text-center py-2 bg-gray-100 rounded-lg border border-gray-200">
+                          Replies are currently only supported for Messenger channels.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

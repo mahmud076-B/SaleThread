@@ -105,6 +105,8 @@ model Conversation {
   estimatedValue Decimal?           @db.Decimal(10, 2)
   lastMessageAt  DateTime
 
+  isUnread       Boolean            @default(true)
+
   business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)

@@ -81,10 +81,13 @@ export async function ingestIncomingMessage(event: NormalizedMessage) {
       },
     });
 
-    // 6. Update Conversation.lastMessageAt
+    // 6. Update Conversation.lastMessageAt and isUnread
     await prisma.conversation.update({
       where: { id: conversation.id },
-      data: { lastMessageAt: new Date(event.timestamp) },
+      data: { 
+        lastMessageAt: new Date(event.timestamp),
+        isUnread: true 
+      },
     });
   } catch (error: any) {
     // Handle unique constraint violation on externalId (duplicate delivery)
