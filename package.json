@@ -33,13 +33,5 @@
     "ts-node": "^10.9.2",
     "typescript": "^5"
   },
-  "packageManager": "pnpm@11.24.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/client",
-      "@prisma/engines",
-      "prisma",
-      "bcryptjs"
-    ]
-  }
+  "packageManager": "pnpm@11.24.0"
 }
