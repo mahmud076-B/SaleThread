@@ -1,5 +1,3 @@
 allowBuilds:
-  "@prisma/client": true
-  "@prisma/engines": true
-  prisma: true
-  bcryptjs: true
+  sharp: false
+  unrs-resolver: false

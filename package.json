@@ -4,11 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy && next build",
+    "build": "npx prisma generate && npx prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
-    "seed": "ts-node --compiler-options \"{\\\"module\\\": \\\"CommonJS\\\"}\" -r dotenv/config prisma/seed.ts dotenv_config_path=.env.local",
-    "postinstall": "prisma generate"
+    "seed": "ts-node --compiler-options \"{\\\"module\\\": \\\"CommonJS\\\"}\" -r dotenv/config prisma/seed.ts dotenv_config_path=.env.local"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
