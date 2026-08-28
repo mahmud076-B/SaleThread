@@ -64,6 +64,11 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const [replyText, setReplyText] = useState("");
   const [isSending, setIsSending] = useState(false);
 
+  // AI State
+  const [aiSuggestions, setAiSuggestions] = useState<{text: string, tone: string}[] | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   // Sync state if props change (e.g. Next.js refresh)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -183,6 +188,30 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       );
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleSuggestReplies = async (conversationId: string) => {
+    if (isAiLoading) return;
+    setIsAiLoading(true);
+    setAiError(null);
+    setAiSuggestions(null);
+
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/suggestions`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI suggestions are temporarily unavailable. Please try again.");
+      }
+      
+      setAiSuggestions(data.data.suggestions);
+    } catch (err: any) {
+      setAiError(err.message || "AI suggestions are temporarily unavailable. Please try again.");
+    } finally {
+      setIsAiLoading(false);
     }
   };
 
@@ -310,6 +339,8 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                     onClick={() => {
                       setExpandedId(c.id);
                       setReplyText("");
+                      setAiSuggestions(null);
+                      setAiError(null);
                       if (c.isUnread) markAsRead(c.id);
                     }}
                     className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50/40 relative' : ''}`}
@@ -364,7 +395,11 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                 <div className="flex items-center gap-3 min-w-0">
                   <button 
                     className="md:hidden p-2 -ml-2 text-gray-400 hover:text-gray-600 rounded-full" 
-                    onClick={() => setExpandedId(null)}
+                    onClick={() => {
+                      setExpandedId(null);
+                      setAiSuggestions(null);
+                      setAiError(null);
+                    }}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                   </button>
@@ -430,48 +465,107 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
               </div>
               
               {/* Composer */}
-              <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0">
+              <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0 flex flex-col gap-3">
                 {selectedConv.channel.type === "messenger" ? (
-                  <div className="relative rounded-xl border border-gray-300 shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all bg-white">
-                    <textarea
-                      placeholder="Message..."
-                      className="w-full text-[15px] resize-none border-none focus:ring-0 p-3 pr-12 text-gray-900 bg-transparent placeholder-gray-400 rounded-xl max-h-32 min-h-[44px]"
-                      rows={1}
-                      value={replyText}
-                      onChange={(e) => {
-                        setReplyText(e.target.value);
-                        e.target.style.height = 'inherit';
-                        e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
-                      }}
-                      disabled={isSending}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendReply(selectedConv.id, replyText);
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={() => handleSendReply(selectedConv.id, replyText)}
-                      disabled={!replyText.trim() || isSending}
-                      className={`absolute right-2 bottom-2 p-1.5 rounded-full transition-colors flex items-center justify-center ${
-                        !replyText.trim() || isSending
-                          ? "text-gray-300"
-                          : "text-blue-600 hover:bg-blue-50"
-                      }`}
-                    >
-                      {isSending ? (
-                        <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
-                        </svg>
+                  <>
+                    {/* AI Assistant Area */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                          <svg className="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l2.4 7.6H22l-6.2 4.8 2.3 7.6-6.1-4.7-6.1 4.7 2.3-7.6-6.2-4.8h7.6L12 2z"/></svg>
+                          AI Assistant
+                        </span>
+                        {!aiSuggestions && !isAiLoading && (
+                          <button
+                            onClick={() => handleSuggestReplies(selectedConv.id)}
+                            className="text-xs font-semibold text-purple-600 hover:text-purple-700 hover:bg-purple-50 px-2.5 py-1 rounded-md transition-colors border border-purple-200 flex items-center gap-1"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                            Suggest Replies
+                          </button>
+                        )}
+                      </div>
+
+                      {isAiLoading && (
+                        <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-center gap-3">
+                          <svg className="animate-spin h-5 w-5 text-purple-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          <span className="text-sm font-medium text-gray-600">Analyzing conversation...</span>
+                        </div>
                       )}
-                    </button>
-                  </div>
+
+                      {aiError && (
+                        <div className="p-3 bg-red-50 rounded-xl border border-red-100 text-sm text-red-700 flex justify-between items-center">
+                          <span>{aiError}</span>
+                          <button onClick={() => setAiError(null)} className="text-red-500 hover:text-red-700"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                        </div>
+                      )}
+
+                      {aiSuggestions && (
+                        <div className="flex gap-3 overflow-x-auto pb-2 snap-x scrollbar-thin scrollbar-thumb-gray-200">
+                          {aiSuggestions.map((sug, i) => (
+                            <div key={i} className="flex-shrink-0 w-[260px] p-3 bg-gradient-to-br from-white to-purple-50/30 rounded-xl border border-purple-100 shadow-sm flex flex-col justify-between snap-start">
+                              <div>
+                                <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 mb-2">
+                                  {sug.tone}
+                                </span>
+                                <p className="text-sm text-gray-700 line-clamp-3 mb-3 leading-relaxed">{sug.text}</p>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setReplyText(sug.text);
+                                }}
+                                className="w-full text-xs font-semibold bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-gray-900 py-1.5 rounded-lg transition-colors shadow-sm"
+                              >
+                                Use Reply
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Chat Input */}
+                    <div className="relative rounded-xl border border-gray-300 shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all bg-white">
+                      <textarea
+                        placeholder="Message..."
+                        className="w-full text-[15px] resize-none border-none focus:ring-0 p-3 pr-12 text-gray-900 bg-transparent placeholder-gray-400 rounded-xl max-h-32 min-h-[44px]"
+                        rows={1}
+                        value={replyText}
+                        onChange={(e) => {
+                          setReplyText(e.target.value);
+                          e.target.style.height = 'inherit';
+                          e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
+                        }}
+                        disabled={isSending}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendReply(selectedConv.id, replyText);
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => handleSendReply(selectedConv.id, replyText)}
+                        disabled={!replyText.trim() || isSending}
+                        className={`absolute right-2 bottom-2 p-1.5 rounded-full transition-colors flex items-center justify-center ${
+                          !replyText.trim() || isSending
+                            ? "text-gray-300"
+                            : "text-blue-600 hover:bg-blue-50"
+                        }`}
+                      >
+                        {isSending ? (
+                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </>
                 ) : (
                   <div className="bg-gray-50 rounded-lg p-3 text-center border border-gray-200">
                     <p className="text-sm text-gray-500 font-medium">
