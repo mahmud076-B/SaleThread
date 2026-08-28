@@ -69,6 +69,16 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Phase 2 AI Insights State
+  const [conversationInsights, setConversationInsights] = useState<any | null>(null);
+  const [isInsightsLoading, setIsInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
+
+  // Phase 3 AI Lead Intelligence State
+  const [leadIntelligence, setLeadIntelligence] = useState<any | null>(null);
+  const [isLeadIntelligenceLoading, setIsLeadIntelligenceLoading] = useState(false);
+  const [leadIntelligenceError, setLeadIntelligenceError] = useState<string | null>(null);
+
   // Sync state if props change (e.g. Next.js refresh)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -215,6 +225,29 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
     }
   };
 
+  const handleAnalyzeConversation = async (conversationId: string) => {
+    if (isInsightsLoading) return;
+    setIsInsightsLoading(true);
+    setInsightsError(null);
+    
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/insights`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI insights are temporarily unavailable. Please try again.");
+      }
+      
+      setConversationInsights(data.data.insights);
+    } catch (err: any) {
+      setInsightsError(err.message || "AI insights are temporarily unavailable. Please try again.");
+    } finally {
+      setIsInsightsLoading(false);
+    }
+  };
+
   const handleLeadUpdate = (updateData: Partial<ConversationRow>) => {
     if (!selectedConv) return;
     setConversations(prev => 
@@ -222,6 +255,47 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
         c.id === selectedConv.id ? { ...c, ...updateData } : c
       )
     );
+  };
+
+  const handleAnalyzeLead = async (conversationId: string) => {
+    if (isLeadIntelligenceLoading) return;
+    setIsLeadIntelligenceLoading(true);
+    setLeadIntelligenceError(null);
+    
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/lead-intelligence`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI lead intelligence is temporarily unavailable. Please try again.");
+      }
+      
+      setLeadIntelligence(data.intelligence);
+    } catch (err: any) {
+      setLeadIntelligenceError(err.message || "AI lead intelligence is temporarily unavailable. Please try again.");
+    } finally {
+      setIsLeadIntelligenceLoading(false);
+    }
+  };
+
+  const applyLeadIntelligence = async (conversationId: string, payload: any) => {
+    handleLeadUpdate(payload); // Optimistic update
+    
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/lead`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to apply recommendation.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to apply lead update. Please try again.");
+    }
   };
 
   const selectedConv = conversations.find(c => c.id === expandedId);
@@ -341,6 +415,10 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       setReplyText("");
                       setAiSuggestions(null);
                       setAiError(null);
+                      setConversationInsights(null);
+                      setInsightsError(null);
+                      setLeadIntelligence(null);
+                      setLeadIntelligenceError(null);
                       if (c.isUnread) markAsRead(c.id);
                     }}
                     className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50/40 relative' : ''}`}
@@ -399,6 +477,10 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       setExpandedId(null);
                       setAiSuggestions(null);
                       setAiError(null);
+                      setConversationInsights(null);
+                      setInsightsError(null);
+                      setLeadIntelligence(null);
+                      setLeadIntelligenceError(null);
                     }}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -593,6 +675,252 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
               </div>
               
               <div className="p-5 space-y-6">
+                {/* AI Conversation Intelligence */}
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Intelligence</h4>
+                  {!conversationInsights && !isInsightsLoading && !insightsError && (
+                    <button
+                      onClick={() => handleAnalyzeConversation(selectedConv.id)}
+                      className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      ✨ Analyze Conversation
+                    </button>
+                  )}
+
+                  {isInsightsLoading && (
+                    <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                      <svg className="animate-spin h-5 w-5 text-purple-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span className="text-sm font-medium text-gray-600">Analyzing...</span>
+                    </div>
+                  )}
+
+                  {insightsError && (
+                    <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                      <span className="text-xs text-red-700">{insightsError}</span>
+                      <button onClick={() => handleAnalyzeConversation(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {conversationInsights && (
+                    <div className="w-full bg-white rounded-xl border border-purple-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 px-3 py-2 border-b border-purple-100 flex items-center justify-between">
+                        <span className="text-xs font-bold text-purple-800 tracking-wide">✨ Conversation Intelligence</span>
+                      </div>
+                      <div className="p-3 space-y-4">
+                        
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Summary</p>
+                          <p className="text-xs text-gray-800 leading-relaxed">{conversationInsights.summary}</p>
+                        </div>
+                        
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Intent</p>
+                          <p className="text-xs text-gray-800 leading-relaxed">{conversationInsights.intent}</p>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Lead Temperature</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm">
+                              {conversationInsights.temperature === 'hot' ? '🔥' :
+                               conversationInsights.temperature === 'warm' ? '🟡' :
+                               conversationInsights.temperature === 'cold' ? '🔵' : '⚪'}
+                            </span>
+                            <span className="text-xs font-semibold text-gray-800 capitalize">{conversationInsights.temperature}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Key Requirements</p>
+                          {conversationInsights.requirements?.length > 0 ? (
+                            <ul className="list-disc pl-3 text-xs text-gray-800 space-y-0.5">
+                              {conversationInsights.requirements.map((req: string, i: number) => (
+                                <li key={i}>{req}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500 italic">No specific requirements identified.</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Customer Concerns</p>
+                          {conversationInsights.concerns?.length > 0 ? (
+                            <ul className="list-disc pl-3 text-xs text-gray-800 space-y-0.5">
+                              {conversationInsights.concerns.map((req: string, i: number) => (
+                                <li key={i}>{req}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500 italic">No specific concerns identified.</p>
+                          )}
+                        </div>
+
+                        <div className="bg-blue-50 -mx-3 -mb-3 p-3 border-t border-blue-100">
+                          <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Recommended Next Action</p>
+                          <p className="text-xs text-blue-900 font-medium leading-relaxed">{conversationInsights.nextAction}</p>
+                        </div>
+
+                      </div>
+                      <div className="border-t border-gray-100 p-2 bg-gray-50">
+                        <button
+                          onClick={() => handleAnalyzeConversation(selectedConv.id)}
+                          disabled={isInsightsLoading}
+                          className="w-full text-xs font-medium text-gray-600 hover:text-gray-900 py-1 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                        >
+                          ↻ Refresh Analysis
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* AI Lead Intelligence */}
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Lead Intelligence</h4>
+                  {!leadIntelligence && !isLeadIntelligenceLoading && !leadIntelligenceError && (
+                    <button
+                      onClick={() => handleAnalyzeLead(selectedConv.id)}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      ✨ Analyze Lead
+                    </button>
+                  )}
+
+                  {isLeadIntelligenceLoading && (
+                    <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                      <svg className="animate-spin h-5 w-5 text-emerald-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span className="text-sm font-medium text-gray-600">Analyzing Lead...</span>
+                    </div>
+                  )}
+
+                  {leadIntelligenceError && (
+                    <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                      <span className="text-xs text-red-700">{leadIntelligenceError}</span>
+                      <button onClick={() => handleAnalyzeLead(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {leadIntelligence && (
+                    <div className="w-full bg-white rounded-xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 border-b border-emerald-100 flex items-center justify-between">
+                        <span className="text-xs font-bold text-emerald-800 tracking-wide">✨ AI Lead Intelligence</span>
+                      </div>
+                      <div className="p-3 space-y-4">
+                        
+                        {/* Score & Intent */}
+                        <div className="flex gap-4">
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Lead Score</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">🔥</span>
+                              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${leadIntelligence.leadScore}%` }} />
+                              </div>
+                              <span className="text-xs font-bold text-gray-900">{leadIntelligence.leadScore}/100</span>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Intent</p>
+                            <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                              leadIntelligence.buyingIntent === 'high' ? 'bg-green-50 text-green-700 border-green-200' :
+                              leadIntelligence.buyingIntent === 'medium' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                              leadIntelligence.buyingIntent === 'low' ? 'bg-gray-50 text-gray-700 border-gray-200' :
+                              'bg-gray-50 text-gray-500 border-gray-200'
+                            }`}>
+                              {leadIntelligence.buyingIntent}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Conversion Probability</p>
+                          <p className="text-sm font-bold text-gray-900">{leadIntelligence.conversionProbability}%</p>
+                        </div>
+
+                        {/* Recommendations */}
+                        <div className="space-y-3 bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Rec. Status</p>
+                              <p className="text-xs font-bold text-gray-900 capitalize">{leadIntelligence.recommendedStatus}</p>
+                            </div>
+                            {selectedConv.status !== leadIntelligence.recommendedStatus && (
+                              <button 
+                                onClick={() => applyLeadIntelligence(selectedConv.id, { status: leadIntelligence.recommendedStatus })}
+                                className="text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 px-2 py-1 rounded shadow-sm transition-colors"
+                              >
+                                Apply
+                              </button>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center justify-between gap-2 border-t border-gray-200 pt-3">
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Rec. Priority</p>
+                              <p className="text-xs font-bold text-gray-900 capitalize">{leadIntelligence.recommendedPriority}</p>
+                            </div>
+                            {selectedConv.priority !== leadIntelligence.recommendedPriority && (
+                              <button 
+                                onClick={() => applyLeadIntelligence(selectedConv.id, { priority: leadIntelligence.recommendedPriority })}
+                                className="text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 px-2 py-1 rounded shadow-sm transition-colors"
+                              >
+                                Apply
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Follow up */}
+                        {leadIntelligence.followUpRecommended && (
+                          <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100">
+                            <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Follow-up Recommendation</p>
+                            <p className="text-xs text-blue-900 mb-1">
+                              {leadIntelligence.recommendedFollowUpHours ? `Follow up in approximately ${leadIntelligence.recommendedFollowUpHours} hours` : "Follow up soon"}
+                            </p>
+                            <p className="text-[11px] text-blue-800/80 mb-2 leading-relaxed">
+                              "{leadIntelligence.followUpReason}"
+                            </p>
+                            <button
+                              onClick={() => {
+                                const hours = leadIntelligence.recommendedFollowUpHours || 24;
+                                const dt = new Date(Date.now() + hours * 60 * 60 * 1000);
+                                applyLeadIntelligence(selectedConv.id, { followUpAt: dt.toISOString(), followUpCompleted: false });
+                              }}
+                              className="w-full text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 py-1.5 rounded-md transition-colors"
+                            >
+                              Schedule Follow-up
+                            </button>
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Risks</p>
+                          {leadIntelligence.risks?.length > 0 ? (
+                            <ul className="list-disc pl-3 text-xs text-red-800 space-y-0.5">
+                              {leadIntelligence.risks.map((risk: string, i: number) => (
+                                <li key={i}>{risk}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-emerald-700 italic">No significant risks detected.</p>
+                          )}
+                        </div>
+
+                        <div className="bg-emerald-50 -mx-3 -mb-3 p-3 border-t border-emerald-100">
+                          <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider mb-1">Next Best Action</p>
+                          <p className="text-xs text-emerald-900 font-medium leading-relaxed">{leadIntelligence.nextBestAction}</p>
+                        </div>
+
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
                   <CustomerTags 
@@ -663,6 +991,252 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                   </div>
                   
                   <div className="p-5 space-y-6 flex-1">
+                    {/* AI Conversation Intelligence */}
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Intelligence</h4>
+                      {!conversationInsights && !isInsightsLoading && !insightsError && (
+                        <button
+                          onClick={() => handleAnalyzeConversation(selectedConv.id)}
+                          className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                        >
+                          ✨ Analyze Conversation
+                        </button>
+                      )}
+
+                      {isInsightsLoading && (
+                        <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                          <svg className="animate-spin h-5 w-5 text-purple-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          <span className="text-sm font-medium text-gray-600">Analyzing...</span>
+                        </div>
+                      )}
+
+                      {insightsError && (
+                        <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                          <span className="text-xs text-red-700">{insightsError}</span>
+                          <button onClick={() => handleAnalyzeConversation(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {conversationInsights && (
+                        <div className="w-full bg-white rounded-xl border border-purple-100 shadow-sm overflow-hidden flex flex-col">
+                          <div className="bg-gradient-to-r from-purple-50 to-indigo-50 px-3 py-2 border-b border-purple-100 flex items-center justify-between">
+                            <span className="text-xs font-bold text-purple-800 tracking-wide">✨ Conversation Intelligence</span>
+                          </div>
+                          <div className="p-3 space-y-4">
+                            
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Summary</p>
+                              <p className="text-xs text-gray-800 leading-relaxed">{conversationInsights.summary}</p>
+                            </div>
+                            
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Intent</p>
+                              <p className="text-xs text-gray-800 leading-relaxed">{conversationInsights.intent}</p>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Lead Temperature</p>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm">
+                                  {conversationInsights.temperature === 'hot' ? '🔥' :
+                                   conversationInsights.temperature === 'warm' ? '🟡' :
+                                   conversationInsights.temperature === 'cold' ? '🔵' : '⚪'}
+                                </span>
+                                <span className="text-xs font-semibold text-gray-800 capitalize">{conversationInsights.temperature}</span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Key Requirements</p>
+                              {conversationInsights.requirements?.length > 0 ? (
+                                <ul className="list-disc pl-3 text-xs text-gray-800 space-y-0.5">
+                                  {conversationInsights.requirements.map((req: string, i: number) => (
+                                    <li key={i}>{req}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="text-xs text-gray-500 italic">No specific requirements identified.</p>
+                              )}
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Customer Concerns</p>
+                              {conversationInsights.concerns?.length > 0 ? (
+                                <ul className="list-disc pl-3 text-xs text-gray-800 space-y-0.5">
+                                  {conversationInsights.concerns.map((req: string, i: number) => (
+                                    <li key={i}>{req}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="text-xs text-gray-500 italic">No specific concerns identified.</p>
+                              )}
+                            </div>
+
+                            <div className="bg-blue-50 -mx-3 -mb-3 p-3 border-t border-blue-100">
+                              <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Recommended Next Action</p>
+                              <p className="text-xs text-blue-900 font-medium leading-relaxed">{conversationInsights.nextAction}</p>
+                            </div>
+
+                          </div>
+                          <div className="border-t border-gray-100 p-2 bg-gray-50">
+                            <button
+                              onClick={() => handleAnalyzeConversation(selectedConv.id)}
+                              disabled={isInsightsLoading}
+                              className="w-full text-xs font-medium text-gray-600 hover:text-gray-900 py-1 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              ↻ Refresh Analysis
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* AI Lead Intelligence (Mobile) */}
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Lead Intelligence</h4>
+                      {!leadIntelligence && !isLeadIntelligenceLoading && !leadIntelligenceError && (
+                        <button
+                          onClick={() => handleAnalyzeLead(selectedConv.id)}
+                          className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                        >
+                          ✨ Analyze Lead
+                        </button>
+                      )}
+
+                      {isLeadIntelligenceLoading && (
+                        <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                          <svg className="animate-spin h-5 w-5 text-emerald-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          <span className="text-sm font-medium text-gray-600">Analyzing Lead...</span>
+                        </div>
+                      )}
+
+                      {leadIntelligenceError && (
+                        <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                          <span className="text-xs text-red-700">{leadIntelligenceError}</span>
+                          <button onClick={() => handleAnalyzeLead(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {leadIntelligence && (
+                        <div className="w-full bg-white rounded-xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col">
+                          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 border-b border-emerald-100 flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-800 tracking-wide">✨ AI Lead Intelligence</span>
+                          </div>
+                          <div className="p-3 space-y-4">
+                            
+                            {/* Score & Intent */}
+                            <div className="flex gap-4">
+                              <div className="flex-1">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Lead Score</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">🔥</span>
+                                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${leadIntelligence.leadScore}%` }} />
+                                  </div>
+                                  <span className="text-xs font-bold text-gray-900">{leadIntelligence.leadScore}/100</span>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Intent</p>
+                                <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                  leadIntelligence.buyingIntent === 'high' ? 'bg-green-50 text-green-700 border-green-200' :
+                                  leadIntelligence.buyingIntent === 'medium' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                  leadIntelligence.buyingIntent === 'low' ? 'bg-gray-50 text-gray-700 border-gray-200' :
+                                  'bg-gray-50 text-gray-500 border-gray-200'
+                                }`}>
+                                  {leadIntelligence.buyingIntent}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Conversion Probability</p>
+                              <p className="text-sm font-bold text-gray-900">{leadIntelligence.conversionProbability}%</p>
+                            </div>
+
+                            {/* Recommendations */}
+                            <div className="space-y-3 bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Rec. Status</p>
+                                  <p className="text-xs font-bold text-gray-900 capitalize">{leadIntelligence.recommendedStatus}</p>
+                                </div>
+                                {selectedConv.status !== leadIntelligence.recommendedStatus && (
+                                  <button 
+                                    onClick={() => applyLeadIntelligence(selectedConv.id, { status: leadIntelligence.recommendedStatus })}
+                                    className="text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 px-2 py-1 rounded shadow-sm transition-colors"
+                                  >
+                                    Apply
+                                  </button>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center justify-between gap-2 border-t border-gray-200 pt-3">
+                                <div>
+                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Rec. Priority</p>
+                                  <p className="text-xs font-bold text-gray-900 capitalize">{leadIntelligence.recommendedPriority}</p>
+                                </div>
+                                {selectedConv.priority !== leadIntelligence.recommendedPriority && (
+                                  <button 
+                                    onClick={() => applyLeadIntelligence(selectedConv.id, { priority: leadIntelligence.recommendedPriority })}
+                                    className="text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 px-2 py-1 rounded shadow-sm transition-colors"
+                                  >
+                                    Apply
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Follow up */}
+                            {leadIntelligence.followUpRecommended && (
+                              <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100">
+                                <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Follow-up Recommendation</p>
+                                <p className="text-xs text-blue-900 mb-1">
+                                  {leadIntelligence.recommendedFollowUpHours ? `Follow up in approximately ${leadIntelligence.recommendedFollowUpHours} hours` : "Follow up soon"}
+                                </p>
+                                <p className="text-[11px] text-blue-800/80 mb-2 leading-relaxed">
+                                  "{leadIntelligence.followUpReason}"
+                                </p>
+                                <button
+                                  onClick={() => {
+                                    const hours = leadIntelligence.recommendedFollowUpHours || 24;
+                                    const dt = new Date(Date.now() + hours * 60 * 60 * 1000);
+                                    applyLeadIntelligence(selectedConv.id, { followUpAt: dt.toISOString(), followUpCompleted: false });
+                                  }}
+                                  className="w-full text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 py-1.5 rounded-md transition-colors"
+                                >
+                                  Schedule Follow-up
+                                </button>
+                              </div>
+                            )}
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Risks</p>
+                              {leadIntelligence.risks?.length > 0 ? (
+                                <ul className="list-disc pl-3 text-xs text-red-800 space-y-0.5">
+                                  {leadIntelligence.risks.map((risk: string, i: number) => (
+                                    <li key={i}>{risk}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="text-xs text-emerald-700 italic">No significant risks detected.</p>
+                              )}
+                            </div>
+
+                            <div className="bg-emerald-50 -mx-3 -mb-3 p-3 border-t border-emerald-100">
+                              <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider mb-1">Next Best Action</p>
+                              <p className="text-xs text-emerald-900 font-medium leading-relaxed">{leadIntelligence.nextBestAction}</p>
+                            </div>
+
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div>
                       <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
                       <CustomerTags 

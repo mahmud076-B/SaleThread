@@ -52,6 +52,7 @@ export default async function TodayPage() {
     statusCounts, // Group by status
     recentConversations,
     activeFollowUps,
+    attentionNeeded,
   ] = await Promise.all([
     prisma.conversation.count({ where: { businessId: business.id } }),
     prisma.conversation.count({ where: { businessId: business.id, isUnread: true } }),
@@ -91,6 +92,23 @@ export default async function TodayPage() {
         channel: true,
       },
       orderBy: { followUpAt: "asc" },
+    }),
+    prisma.conversation.findMany({
+      where: {
+        businessId: business.id,
+        OR: [
+          { isUnread: true },
+          { priority: { in: ['high', 'urgent'] } },
+          { status: { in: ['interested', 'qualified'] } },
+          { followUpAt: { lt: startOfToday }, followUpCompleted: false }
+        ]
+      },
+      orderBy: { lastMessageAt: "desc" },
+      take: 10,
+      include: {
+        customer: true,
+        channel: true,
+      },
     }),
   ]);
 
@@ -157,6 +175,69 @@ export default async function TodayPage() {
             </div>
           </div>
         </section>
+
+        {/* 1.5. AI ATTENTION NEEDED */}
+        {attentionNeeded.length > 0 && (
+          <section>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <span>✨</span> AI Attention Needed
+              </h2>
+            </div>
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col">
+              {attentionNeeded.map((c, index) => {
+                const channel = CHANNEL_BADGES[c.channel.type] ?? {
+                  label: c.channel.type,
+                  className: "bg-gray-100 text-gray-700",
+                };
+                
+                return (
+                  <Link
+                    key={c.id}
+                    href={`/threads?id=${c.id}`}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-white/50 transition-colors gap-3 ${
+                      index !== attentionNeeded.length - 1 ? "border-b border-emerald-100/50" : ""
+                    }`}
+                  >
+                    <div className="flex-1 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-bold text-gray-900">
+                          {c.customer.name}
+                        </p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${channel.className}`}>
+                          {channel.label}
+                        </span>
+                        {c.isUnread && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-blue-100 text-blue-700">
+                            Unread
+                          </span>
+                        )}
+                        {c.priority !== 'normal' && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                            c.priority === 'urgent' ? 'bg-red-50 text-red-600 border-red-200' :
+                            'bg-orange-50 text-orange-600 border-orange-200'
+                          }`}>
+                            {c.priority}
+                          </span>
+                        )}
+                        {['interested', 'qualified'].includes(c.status) && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-emerald-100 text-emerald-700">
+                            {c.status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-xs font-semibold text-emerald-700 bg-white px-3 py-1 rounded-full shadow-sm border border-emerald-100">
+                        Analyze Lead →
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* 2. SALES FOLLOW-UPS */}
         <section>
