@@ -31,7 +31,7 @@ export default function PrivacyPolicyPage() {
               <li>Access basic public profile information of the users interacting with your connected pages, strictly for displaying conversation context.</li>
             </ul>
             <p className="mt-2">
-              Our use of information received from Meta APIs adheres to Meta's Platform Terms and Developer Policies. We do not use this data for targeted advertising or sell it to third parties.
+              Our use of information received from Meta APIs adheres to Meta&apos;s Platform Terms and Developer Policies. We do not use this data for targeted advertising or sell it to third parties.
             </p>
           </section>
 
@@ -63,7 +63,7 @@ export default function PrivacyPolicyPage() {
               <strong>Account Deletion:</strong> If you are a business owner using SaleThread and wish to delete your account, you can request the permanent deletion of your account and all associated Meta messaging data by contacting us. Upon verifying your request, your database records will be erased.
             </p>
             <p className="mt-2">
-              <strong>Customer Data Deletion:</strong> If you are an end-user (customer) who has messaged a business using SaleThread, you have the right to request the deletion of your conversation data. Please contact the business you messaged directly, or contact us using the information below, and we will assist in fulfilling the data deletion request in compliance with Meta's data deletion requirements.
+              <strong>Customer Data Deletion:</strong> If you are an end-user (customer) who has messaged a business using SaleThread, you have the right to request the deletion of your conversation data. Please contact the business you messaged directly, or contact us using the information below, and we will assist in fulfilling the data deletion request in compliance with Meta&apos;s data deletion requirements.
             </p>
           </section>
 

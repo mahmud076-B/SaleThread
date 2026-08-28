@@ -89,9 +89,9 @@ export async function ingestIncomingMessage(event: NormalizedMessage) {
         isUnread: true 
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Handle unique constraint violation on externalId (duplicate delivery)
-    if (error.code === "P2002") {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       console.log(`[Ingest] Duplicate message ignored: ${event.messageId}`);
       return;
     }

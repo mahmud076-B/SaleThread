@@ -14,8 +14,28 @@ export default async function ThreadsPage() {
 
   const conversations = await prisma.conversation.findMany({
     where: { businessId: business.id },
-    include: {
-      customer: true,
+    select: {
+      id: true,
+      status: true,
+      priority: true,
+      reason: true,
+      estimatedValue: true,
+      lastMessageAt: true,
+      isUnread: true,
+      followUpAt: true,
+      followUpCompleted: true,
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          externalId: true,
+          tags: {
+            select: {
+              tag: true
+            }
+          }
+        }
+      },
       channel: true,
       messages: {
         orderBy: { sentAt: "desc" },
@@ -34,17 +54,13 @@ export default async function ThreadsPage() {
     estimatedValue: c.estimatedValue ? c.estimatedValue.toString() : null,
     lastMessageAt: c.lastMessageAt.toISOString(),
     isUnread: c.isUnread,
+    followUpAt: c.followUpAt ? c.followUpAt.toISOString() : null,
+    followUpCompleted: c.followUpCompleted,
     messages: c.messages.map((m) => ({ ...m, sentAt: m.sentAt.toISOString() })),
   }));
 
   return (
-    <div>
-      <div className="mb-5">
-        <h1 className="text-xl font-bold text-gray-900">All Threads</h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          {conversations.length} total conversations
-        </p>
-      </div>
+    <div className="w-full h-full bg-white">
       <ThreadsClient conversations={serialised} />
     </div>
   );

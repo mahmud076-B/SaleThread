@@ -14,7 +14,7 @@ export default async function DashboardLayout({
     <div className="min-h-screen bg-gray-50">
       {/* Top nav */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div className="w-full px-4 h-14 flex items-center justify-between">
           <span className="font-bold text-gray-900 text-base">SaleThread</span>
           <form
             action={async () => {
@@ -33,17 +33,18 @@ export default async function DashboardLayout({
         </div>
 
         {/* Bottom nav tabs */}
-        <nav className="max-w-2xl mx-auto px-4 flex gap-1 pb-0">
+        <nav className="w-full px-4 flex gap-1 pb-0 overflow-x-auto">
           {[
             { href: "/today", label: "Today" },
             { href: "/threads", label: "Threads" },
+            { href: "/customers", label: "Customers" },
             { href: "/this-week", label: "This Week" },
             { href: "/settings", label: "Settings" },
           ].map(({ href, label }) => (
             <Link
               key={href}
               href={href}
-              className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 border-b-2 border-transparent hover:border-blue-500 transition-colors"
+              className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 border-b-2 border-transparent hover:border-blue-500 transition-colors whitespace-nowrap"
             >
               {label}
             </Link>
@@ -52,7 +53,7 @@ export default async function DashboardLayout({
       </header>
 
       {/* Page content */}
-      <main className="max-w-2xl mx-auto px-4 py-6">{children}</main>
+      <main className="w-full h-[calc(100vh-93px)] overflow-hidden flex flex-col">{children}</main>
     </div>
   );
 }

@@ -57,9 +57,9 @@ export async function POST(
     try {
       const metaRes = await sendMessengerReply(pageId, pageAccessToken, recipientPsid, body.text);
       metaMessageId = metaRes.message_id || null;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Safe error logging without exposing token
-      console.error("Meta API Error:", error.message || "Unknown error");
+      console.error("Meta API Error:", error instanceof Error ? error.message : "Unknown error");
       return NextResponse.json({ error: "Failed to deliver message via Meta" }, { status: 502 });
     }
 

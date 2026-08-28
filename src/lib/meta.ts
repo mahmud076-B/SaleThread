@@ -99,7 +99,7 @@ export async function sendMessengerReply(
       if (errorData.error && errorData.error.message) {
         errorMsg += `: ${errorData.error.message}`;
       }
-    } catch (e) {
+    } catch {
       // Ignore JSON parse errors for the error body
     }
     throw new Error(errorMsg);

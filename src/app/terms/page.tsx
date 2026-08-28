@@ -16,7 +16,7 @@ export default function TermsOfServicePage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">1. Acceptance of Terms</h2>
             <p>
-              By accessing and using SaleThread ("the Service"), you accept and agree to be bound by these Terms of Service. If you do not agree to these terms, you may not use the Service.
+              By accessing and using SaleThread (&quot;the Service&quot;), you accept and agree to be bound by these Terms of Service. If you do not agree to these terms, you may not use the Service.
             </p>
           </section>
 
@@ -46,7 +46,7 @@ export default function TermsOfServicePage() {
             </p>
             <ul className="list-disc pl-5 mt-2 space-y-1">
               <li>Send spam, unsolicited promotions, or harassing messages.</li>
-              <li>Violate Meta's Platform Terms, Commerce Policies, or Community Standards.</li>
+              <li>Violate Meta&apos;s Platform Terms, Commerce Policies, or Community Standards.</li>
               <li>Attempt to disrupt or compromise the integrity or security of the Service.</li>
             </ul>
           </section>
@@ -54,14 +54,14 @@ export default function TermsOfServicePage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">5. Third-Party Services (Meta)</h2>
             <p>
-              SaleThread relies on APIs provided by Meta Platforms, Inc. (Facebook and Instagram). Your use of SaleThread is also subject to Meta's Terms of Service. We are not responsible for any changes in Meta's API availability, policy updates, or service interruptions that may affect SaleThread's functionality.
+              SaleThread relies on APIs provided by Meta Platforms, Inc. (Facebook and Instagram). Your use of SaleThread is also subject to Meta&apos;s Terms of Service. We are not responsible for any changes in Meta&apos;s API availability, policy updates, or service interruptions that may affect SaleThread&apos;s functionality.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">6. Limitation of Liability</h2>
             <p>
-              SaleThread is provided on an "as is" and "as available" basis. To the maximum extent permitted by law, SaleThread and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or goodwill, arising from your use or inability to use the Service.
+              SaleThread is provided on an &quot;as is&quot; and &quot;as available&quot; basis. To the maximum extent permitted by law, SaleThread and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or goodwill, arising from your use or inability to use the Service.
             </p>
           </section>
 

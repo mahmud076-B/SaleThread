@@ -2,49 +2,39 @@
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import type { ConversationStatus, ChannelType } from "@prisma/client";
+import { CustomerNotes } from "@/components/CustomerNotes";
+import { CustomerTags } from "@/components/CustomerTags";
+import { LeadControls } from "@/components/LeadControls";
+import type { ConversationStatus, ConversationPriority, ChannelType, CustomerTag } from "@prisma/client";
 
 type ConversationRow = {
   id: string;
   status: ConversationStatus;
+  priority: ConversationPriority;
   reason: string | null;
   estimatedValue: string | null;
+  followUpAt: string | null;
+  followUpCompleted: boolean;
   lastMessageAt: string;
   isUnread: boolean;
-  customer: { name: string; externalId: string };
+  customer: { id: string; name: string; externalId: string; tags: { tag: CustomerTag }[] };
   channel: { type: ChannelType; displayName: string };
   messages: { id: string; content: string; sender: string; sentAt: string; isFailed?: boolean }[];
 };
-
-const STATUS_STYLES: Record<ConversationStatus, string> = {
-  sold: "bg-green-100 text-green-800",
-  lost: "bg-red-100 text-red-800",
-  pending: "bg-yellow-100 text-yellow-800",
-};
-
-const CHANNEL_STYLES: Record<ChannelType, string> = {
-  messenger: "bg-blue-100 text-blue-700",
-  instagram: "bg-pink-100 text-pink-700",
-};
-
-const STATUS_TABS: Array<ConversationStatus | "all"> = ["all", "pending", "sold", "lost"];
-const CHANNEL_TABS: Array<ChannelType | "all"> = ["all", "messenger", "instagram"];
-const READ_TABS: Array<"all" | "unread" | "read"> = ["all", "unread", "read"];
 
 function formatRelativeTime(isoString: string) {
   const diff = Date.now() - new Date(isoString).getTime();
   const hours = Math.floor(diff / (1000 * 60 * 60));
   if (hours < 1) return "just now";
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${days}d`;
 }
 
 function formatFullTime(isoString: string) {
   return new Date(isoString).toLocaleString([], {
     month: "short",
     day: "numeric",
-    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -61,25 +51,41 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(idParam);
   
+  // Mobile Drawer State
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+
+  // When selectedConv changes, reset mobile drawer state
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsMobileDrawerOpen(false);
+  }, [expandedId]);
+  
   // Composer state
   const [replyText, setReplyText] = useState("");
   const [isSending, setIsSending] = useState(false);
 
   // Sync state if props change (e.g. Next.js refresh)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setConversations(initialConversations);
   }, [initialConversations]);
+
+  const markAsRead = async (conversationId: string) => {
+    try {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, isUnread: false } : c))
+      );
+      await fetch(`/api/conversations/${conversationId}/read`, { method: "PATCH" });
+    } catch (err) {
+      console.error("Failed to mark as read:", err);
+    }
+  };
 
   // Handle deep linking on mount
   useEffect(() => {
     if (idParam) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpandedId(idParam);
-      // Scroll to the conversation if possible
-      setTimeout(() => {
-        document.getElementById(`conversation-${idParam}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 300);
-      
-      // If it's unread, mark it as read
       const c = conversations.find(c => c.id === idParam);
       if (c && c.isUnread) {
         markAsRead(idParam);
@@ -91,9 +97,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const filtered = useMemo(() => {
     const result = conversations.filter((c) => {
       const matchStatus = activeStatus === "all" || c.status === activeStatus;
-      
       const matchChannel = channelFilter === "all" || c.channel.type === channelFilter;
-      
       const matchRead = readStatus === "all" 
         ? true 
         : readStatus === "unread" ? c.isUnread : !c.isUnread;
@@ -108,7 +112,6 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       return matchStatus && matchChannel && matchRead && matchSearch;
     });
 
-    // Explicit sorting: 1. Unread first, 2. Latest message first
     result.sort((a, b) => {
       if (a.isUnread && !b.isUnread) return -1;
       if (!a.isUnread && b.isUnread) return 1;
@@ -118,20 +121,10 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
     return result;
   }, [conversations, activeStatus, channelFilter, readStatus, search]);
 
-  const markAsRead = async (conversationId: string) => {
-    try {
-      setConversations((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, isUnread: false } : c))
-      );
-      await fetch(`/api/conversations/${conversationId}/read`, { method: "PATCH" });
-    } catch (err) {
-      console.error("Failed to mark as read:", err);
-    }
-  };
+
 
   const handleSendReply = async (conversationId: string, textToSend: string, retryId?: string) => {
     if (!textToSend.trim() || isSending) return;
-
     setIsSending(true);
 
     if (retryId) {
@@ -153,10 +146,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       });
 
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to send message");
-      }
+      if (!res.ok) throw new Error(data.error || "Failed to send message");
 
       setConversations((prev) =>
         prev.map((c) => {
@@ -174,9 +164,9 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       if (!retryId || textToSend === replyText) {
         setReplyText("");
       }
-    } catch (err: any) {
+    } catch {
       const failedMessage = {
-        id: `failed-${Date.now()}`,
+        id: `failed-${crypto.randomUUID()}`,
         content: textToSend.trim(),
         sender: "business",
         sentAt: new Date().toISOString(),
@@ -186,10 +176,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id === conversationId) {
-            return {
-              ...c,
-              messages: [failedMessage, ...c.messages],
-            };
+            return { ...c, messages: [failedMessage, ...c.messages] };
           }
           return c;
         })
@@ -199,291 +186,472 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
     }
   };
 
+  const handleLeadUpdate = (updateData: Partial<ConversationRow>) => {
+    if (!selectedConv) return;
+    setConversations(prev => 
+      prev.map(c => 
+        c.id === selectedConv.id ? { ...c, ...updateData } : c
+      )
+    );
+  };
+
+  const selectedConv = conversations.find(c => c.id === expandedId);
+
   return (
-    <div className="space-y-4">
-      {/* Filters & Search Row */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        {/* Search */}
-        <div className="relative flex-1">
-          <input
-            id="threads-search"
-            type="search"
-            placeholder="Search name, ID, or messages…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 pl-10 pr-10 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-          />
-          <svg className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          {search && (
-            <button 
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-2.5 h-5 w-5 text-gray-400 hover:text-gray-600 rounded-full"
-            >
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+    <div className="flex h-full w-full bg-white text-gray-900 overflow-hidden divide-x divide-gray-200 text-sm">
+      
+      {/* --- COLUMN 1: INBOX NAVIGATION --- */}
+      <div className="hidden lg:flex w-64 flex-col bg-gray-50 flex-shrink-0 h-full overflow-y-auto">
+        <div className="p-4 py-5">
+          <h2 className="text-xl font-bold text-gray-900 tracking-tight">Inbox</h2>
         </div>
 
-        {/* Channel Filter */}
-        <select
-          value={channelFilter}
-          onChange={(e) => setChannelFilter(e.target.value as any)}
-          className="rounded-lg border border-gray-300 py-2.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white"
-        >
-          <option value="all">All Channels</option>
-          <option value="messenger">Messenger</option>
-          <option value="instagram">Instagram</option>
-        </select>
-
-        {/* Read Filter */}
-        <select
-          value={readStatus}
-          onChange={(e) => setReadStatus(e.target.value as any)}
-          className="rounded-lg border border-gray-300 py-2.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white"
-        >
-          <option value="all">All Statuses</option>
-          <option value="unread">Unread Only</option>
-          <option value="read">Read Only</option>
-        </select>
-      </div>
-
-      {/* Status tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-        {STATUS_TABS.map((s) => (
-          <button
-            key={s}
-            id={`tab-${s}`}
-            onClick={() => setActiveStatus(s)}
-            className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors capitalize ${
-              activeStatus === s
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {s === "all" ? "All Tags" : s}
-          </button>
-        ))}
-      </div>
-
-      {/* Count */}
-      <p className="text-xs text-gray-500 font-medium">Showing {filtered.length} conversation{filtered.length !== 1 ? "s" : ""}</p>
-
-      {/* Rows */}
-      {filtered.length === 0 ? (
-        <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-          <svg className="mx-auto h-12 w-12 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-          <p className="text-gray-600 font-medium text-sm">
-            {conversations.length === 0 
-              ? "You're all caught up! No conversations yet." 
-              : "No conversations found matching your filters."}
-          </p>
-          {conversations.length > 0 && (
-            <button 
-              onClick={() => {
-                setSearch("");
-                setChannelFilter("all");
-                setReadStatus("all");
-                setActiveStatus("all");
-              }}
-              className="mt-2 text-xs text-blue-600 hover:text-blue-700 font-medium"
-            >
-              Clear filters
-            </button>
-          )}
+        {/* Platforms */}
+        <div className="px-3 mb-6">
+          <p className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Platform</p>
+          <div className="space-y-0.5">
+            <NavButton 
+              active={channelFilter === "all"} 
+              onClick={() => setChannelFilter("all")} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} 
+              label="All Platforms" 
+            />
+            <NavButton 
+              active={channelFilter === "messenger"} 
+              onClick={() => setChannelFilter("messenger")} 
+              icon={<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.145 2 11.26c0 2.923 1.488 5.485 3.791 7.158V22l3.454-1.895c1.233.342 2.553.526 3.93.526 5.523 0 10-4.145 10-9.26S17.523 2 12 2zm1.093 12.56-2.883-3.076-5.632 3.076 6.183-6.558 2.943 3.076 5.572-3.076-6.183 6.558z"/></svg>} 
+              label="Messenger" 
+            />
+            <NavButton 
+              active={channelFilter === "instagram"} 
+              onClick={() => setChannelFilter("instagram")} 
+              icon={<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>} 
+              label="Instagram" 
+            />
+          </div>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {filtered.map((c) => {
-            const isExpanded = expandedId === c.id;
 
-            return (
-              <div
-                key={c.id}
-                id={`conversation-${c.id}`}
-                className={`bg-white rounded-xl border overflow-hidden transition-shadow ${isExpanded ? 'border-blue-300 shadow-md' : 'border-gray-200'}`}
-              >
-                {/* Header (Click to expand) */}
-                <div
-                  className={`p-4 cursor-pointer transition-colors ${c.isUnread ? 'bg-blue-50/50 hover:bg-blue-50' : 'hover:bg-gray-50'}`}
-                  onClick={() => {
-                    if (isExpanded) {
-                      setExpandedId(null);
-                    } else {
+        {/* Filters */}
+        <div className="px-3 mb-6">
+          <p className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Filters</p>
+          <div className="space-y-0.5">
+            <NavButton 
+              active={readStatus === "all" && activeStatus === "all"} 
+              onClick={() => { setReadStatus("all"); setActiveStatus("all"); }} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>} 
+              label="All Messages" 
+              count={conversations.length}
+            />
+            <NavButton 
+              active={readStatus === "unread"} 
+              onClick={() => { setReadStatus("unread"); setActiveStatus("all"); }} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>} 
+              label="Unread" 
+              count={conversations.filter(c => c.isUnread).length}
+            />
+            <NavButton 
+              active={activeStatus === "pending"} 
+              onClick={() => { setActiveStatus("pending"); setReadStatus("all"); }} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} 
+              label="Pending" 
+            />
+            <NavButton 
+              active={activeStatus === "sold"} 
+              onClick={() => { setActiveStatus("sold"); setReadStatus("all"); }} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} 
+              label="Sold" 
+            />
+            <NavButton 
+              active={activeStatus === "lost"} 
+              onClick={() => { setActiveStatus("lost"); setReadStatus("all"); }} 
+              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} 
+              label="Lost" 
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* --- COLUMN 2: CONVERSATION LIST --- */}
+      <div className={`flex-col flex-shrink-0 w-full md:w-[320px] lg:w-[360px] bg-white h-full ${expandedId ? 'hidden md:flex' : 'flex'}`}>
+        {/* Header & Search */}
+        <div className="p-4 border-b border-gray-200 flex flex-col gap-4 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xl font-bold text-gray-900 tracking-tight">Messages</h3>
+            <span className="bg-gray-100 text-gray-600 text-xs font-semibold px-2 py-1 rounded-full">{filtered.length}</span>
+          </div>
+          <div className="relative">
+            <input
+              type="search"
+              placeholder="Search conversations..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-gray-100/80 border-transparent focus:border-blue-500 focus:bg-white focus:ring-0 rounded-lg pl-9 pr-4 py-2 text-sm transition-colors"
+            />
+            <svg className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        </div>
+        
+        {/* List */}
+        <div className="flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              <p className="text-sm">No conversations found.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {filtered.map(c => {
+                const isActive = expandedId === c.id;
+                const latestMsg = c.messages[0];
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => {
                       setExpandedId(c.id);
                       setReplyText("");
                       if (c.isUnread) markAsRead(c.id);
-                    }
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex items-center gap-2">
-                      {c.isUnread ? (
-                        <span className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" />
-                      ) : (
-                        <span className="w-2 h-2 rounded-full bg-transparent flex-shrink-0" />
-                      )}
-                      <div>
-                        <p className={`text-sm truncate ${c.isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
+                    }}
+                    className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50/40 relative' : ''}`}
+                  >
+                    {isActive && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600" />}
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {c.isUnread && !isActive && <div className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" />}
+                        <p className={`text-sm truncate ${c.isUnread && !isActive ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
                           {c.customer.name}
                         </p>
-                        <div className="flex gap-1.5 mt-1 flex-wrap">
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[c.status]}`}
-                          >
-                            {c.status}
-                          </span>
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${CHANNEL_STYLES[c.channel.type]}`}
-                          >
-                            {c.channel.type}
-                          </span>
-                        </div>
                       </div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      {c.estimatedValue && (
-                        <p className={`text-sm ${c.isUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-900'}`}>
-                          ৳{Number(c.estimatedValue).toLocaleString()}
-                        </p>
-                      )}
-                      <p className={`text-xs mt-0.5 ${c.isUnread ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
+                      <span className="text-[11px] text-gray-500 whitespace-nowrap ml-2 flex-shrink-0">
                         {formatRelativeTime(c.lastMessageAt)}
-                      </p>
+                      </span>
+                    </div>
+                    
+                    <p className={`text-sm truncate mb-2 ${c.isUnread && !isActive ? 'font-medium text-gray-800' : 'text-gray-500'}`}>
+                      {latestMsg?.sender === "business" ? "You: " : ""}{latestMsg?.content || "No messages"}
+                    </p>
+
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                        ['won', 'sold'].includes(c.status) ? 'bg-green-100 text-green-700 border-green-200' :
+                        c.status === 'lost' ? 'bg-red-100 text-red-700 border-red-200' :
+                        'bg-gray-100 text-gray-700 border-gray-200'
+                      }`}>
+                        {c.status}
+                      </span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium uppercase tracking-wider ${
+                        c.channel.type === 'messenger' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'
+                      }`}>
+                        {c.channel.type}
+                      </span>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* --- COLUMN 3: ACTIVE CHAT + INFO PANEL --- */}
+      <div className={`flex-1 flex-col bg-white min-w-0 h-full ${expandedId ? 'flex' : 'hidden md:flex'}`}>
+        {expandedId && selectedConv ? (
+          <div className="flex h-full w-full relative">
+            {/* Main Chat Area */}
+            <div className="flex-1 flex flex-col min-w-0 bg-white">
+              {/* Header */}
+              <div className="h-[73px] flex items-center px-4 border-b border-gray-200 justify-between flex-shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <button 
+                    className="md:hidden p-2 -ml-2 text-gray-400 hover:text-gray-600 rounded-full" 
+                    onClick={() => setExpandedId(null)}
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  </button>
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold flex-shrink-0">
+                    {selectedConv.customer.name.charAt(0)}
+                  </div>
+                  <div className="truncate">
+                    <h3 className="font-bold text-gray-900 truncate text-base">{selectedConv.customer.name}</h3>
+                    <p className="text-xs text-gray-500 capitalize">{selectedConv.channel.displayName}</p>
+                  </div>
                 </div>
+              </div>
+              
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto p-4 flex flex-col-reverse bg-white scroll-smooth">
+                {selectedConv.messages.length === 0 ? (
+                  <div className="text-center py-10 my-auto">
+                    <p className="text-gray-400 text-sm">No messages yet.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedConv.messages.slice().reverse().map((msg, i, arr) => {
+                      const isBusiness = msg.sender === "business" || msg.sender === "ai_draft";
+                      const prevMsg = i > 0 ? arr[i - 1] : null;
+                      const showTime = !prevMsg || new Date(msg.sentAt).getTime() - new Date(prevMsg.sentAt).getTime() > 1000 * 60 * 30; // 30 mins
 
-                {/* Expanded Content */}
-                {isExpanded && (
-                  <div className="border-t border-gray-200 bg-gray-50 flex flex-col">
-                    
-                    {/* Customer Info Panel */}
-                    <div className="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center text-sm shadow-sm z-10">
-                      <div>
-                        <p className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Customer</p>
-                        <p className="font-medium text-gray-900">{c.customer.name}</p>
-                      </div>
-                      {c.customer.externalId && (
-                        <div className="hidden sm:block text-center">
-                          <p className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">External ID</p>
-                          <p className="text-gray-600 text-xs font-mono">{c.customer.externalId}</p>
-                        </div>
-                      )}
-                      <div className="text-right">
-                        <p className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Source</p>
-                        <p className="font-medium text-gray-900">{c.channel.displayName}</p>
-                      </div>
-                    </div>
-
-                    <div className="p-4 flex-1 overflow-y-auto max-h-80 space-y-3 mb-4 flex flex-col-reverse">
-                      {c.messages.length === 0 ? (
-                        <div className="text-center py-10">
-                          <p className="text-gray-400 text-sm">No messages in this conversation</p>
-                        </div>
-                      ) : (
-                        c.messages.map((msg) => {
-                          const isBusiness = msg.sender === "business" || msg.sender === "ai_draft";
-                          return (
-                            <div
-                              key={msg.id}
-                              className={`max-w-[85%] rounded-lg p-3 text-sm ${
-                                isBusiness
-                                  ? msg.isFailed 
-                                    ? "bg-red-50 border border-red-200 text-red-900 self-end rounded-tr-none" 
-                                    : "bg-blue-600 text-white self-end rounded-tr-none"
-                                  : "bg-white border border-gray-200 text-gray-900 self-start rounded-tl-none shadow-sm"
-                              }`}
-                            >
-                              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                              
-                              <div className={`flex items-center justify-between mt-1.5 gap-4 ${isBusiness ? (msg.isFailed ? 'text-red-500' : 'text-blue-200') : 'text-gray-400'}`}>
-                                <p className="text-[10px]">
-                                  {formatFullTime(msg.sentAt)}
-                                </p>
-                                {msg.isFailed && (
-                                  <button 
-                                    onClick={() => handleSendReply(c.id, msg.content, msg.id)}
-                                    disabled={isSending}
-                                    className="text-[11px] font-bold underline hover:text-red-700 disabled:opacity-50"
-                                  >
-                                    Retry
-                                  </button>
-                                )}
-                              </div>
+                      return (
+                        <div key={msg.id} className="flex flex-col">
+                          {showTime && (
+                            <div className="text-center my-4">
+                              <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">{formatFullTime(msg.sentAt)}</span>
                             </div>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    {/* Composer */}
-                    <div className="p-4 pt-0">
-                      {c.channel.type === "messenger" ? (
-                        <div className="bg-white rounded-lg border border-gray-200 p-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-500 transition-shadow">
-                          <textarea
-                            placeholder="Type a reply..."
-                            className="w-full text-sm resize-none border-none focus:ring-0 p-2 text-gray-900 bg-transparent placeholder-gray-400"
-                            rows={2}
-                            value={replyText}
-                            onChange={(e) => setReplyText(e.target.value)}
-                            disabled={isSending}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                handleSendReply(c.id, replyText);
-                              }
-                            }}
-                          />
-                          <div className="flex items-center justify-between mt-2 px-2">
-                            <p className="text-xs text-gray-400 hidden sm:block">Press Enter to send, Shift+Enter for new line</p>
-                            <p className="text-xs text-gray-400 sm:hidden"></p>
-                            <button
-                              onClick={() => handleSendReply(c.id, replyText)}
-                              disabled={!replyText.trim() || isSending}
-                              className={`px-4 py-1.5 text-sm font-medium text-white rounded-md transition-all flex items-center gap-2 ${
-                                !replyText.trim() || isSending
-                                  ? "bg-blue-300 cursor-not-allowed"
-                                  : "bg-blue-600 hover:bg-blue-700 shadow-sm"
-                              }`}
-                            >
-                              {isSending ? (
-                                <>
-                                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                  </svg>
-                                  Sending...
-                                </>
-                              ) : "Send Reply"}
-                            </button>
+                          )}
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-[15px] ${
+                              isBusiness
+                                ? msg.isFailed 
+                                  ? "bg-red-50 border border-red-200 text-red-900 self-end rounded-tr-sm" 
+                                  : "bg-blue-600 text-white self-end rounded-tr-sm"
+                                : "bg-gray-100 text-gray-900 self-start rounded-tl-sm"
+                            }`}
+                          >
+                            <p className="whitespace-pre-wrap leading-relaxed break-words">{msg.content}</p>
                           </div>
+                          
+                          {/* Failure actions */}
+                          {msg.isFailed && isBusiness && (
+                            <div className="self-end mt-1 mr-1">
+                              <button 
+                                onClick={() => handleSendReply(selectedConv.id, msg.content, msg.id)}
+                                disabled={isSending}
+                                className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                              >
+                                Failed to send. Click to retry.
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <p className="text-xs text-gray-500 text-center py-3 bg-gray-100 rounded-lg border border-gray-200 font-medium">
-                          Replies are currently only supported for Messenger channels.
-                        </p>
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+              
+              {/* Composer */}
+              <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0">
+                {selectedConv.channel.type === "messenger" ? (
+                  <div className="relative rounded-xl border border-gray-300 shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all bg-white">
+                    <textarea
+                      placeholder="Message..."
+                      className="w-full text-[15px] resize-none border-none focus:ring-0 p-3 pr-12 text-gray-900 bg-transparent placeholder-gray-400 rounded-xl max-h-32 min-h-[44px]"
+                      rows={1}
+                      value={replyText}
+                      onChange={(e) => {
+                        setReplyText(e.target.value);
+                        e.target.style.height = 'inherit';
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
+                      }}
+                      disabled={isSending}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendReply(selectedConv.id, replyText);
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => handleSendReply(selectedConv.id, replyText)}
+                      disabled={!replyText.trim() || isSending}
+                      className={`absolute right-2 bottom-2 p-1.5 rounded-full transition-colors flex items-center justify-center ${
+                        !replyText.trim() || isSending
+                          ? "text-gray-300"
+                          : "text-blue-600 hover:bg-blue-50"
+                      }`}
+                    >
+                      {isSending ? (
+                        <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-lg p-3 text-center border border-gray-200">
+                    <p className="text-sm text-gray-500 font-medium">
+                      Replies are currently only supported for Messenger.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Info Panel (Right Sidebar) */}
+            <div className="hidden xl:flex w-[280px] flex-col border-l border-gray-200 bg-white flex-shrink-0 h-full overflow-y-auto">
+              <div className="p-6 text-center border-b border-gray-100 flex flex-col items-center">
+                <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-3xl mb-4">
+                  {selectedConv.customer.name.charAt(0)}
+                </div>
+                <h3 className="font-bold text-gray-900 text-lg leading-tight">{selectedConv.customer.name}</h3>
+                <p className="text-sm text-gray-500 mt-1 capitalize">via {selectedConv.channel.type}</p>
+                
+                <div className="mt-4 flex gap-2 justify-center w-full">
+                  <a href={`/customers/${selectedConv.customer.externalId || selectedConv.customer.name}`} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold py-2 px-4 rounded-lg transition-colors text-center">
+                    View Profile
+                  </a>
+                </div>
+              </div>
+              
+              <div className="p-5 space-y-6">
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
+                  <CustomerTags 
+                    customerId={selectedConv.customer.id} 
+                    initialAssignedTags={selectedConv.customer.tags?.map((t: { tag: CustomerTag }) => t.tag) || []} 
+                  />
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Notes</h4>
+                  <CustomerNotes customerId={selectedConv.customer.id} />
+                </div>
+
+                <div className="border-t border-gray-100 pt-5">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Lead Management</h4>
+                  <LeadControls 
+                    conversationId={selectedConv.id}
+                    status={selectedConv.status}
+                    priority={selectedConv.priority}
+                    estimatedValue={selectedConv.estimatedValue}
+                    followUpAt={selectedConv.followUpAt}
+                    followUpCompleted={selectedConv.followUpCompleted}
+                    onUpdate={handleLeadUpdate}
+                  />
+                </div>
+
+                {selectedConv.reason && (
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Reason</h4>
+                    <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg border border-gray-100 leading-relaxed">
+                      {selectedConv.reason}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Mobile Drawer (Overlay) */}
+            {isMobileDrawerOpen && (
+              <div className="fixed inset-0 z-50 flex xl:hidden">
+                <div 
+                  className="fixed inset-0 bg-black/30 backdrop-blur-sm"
+                  onClick={() => setIsMobileDrawerOpen(false)}
+                />
+                <div className="absolute right-0 top-0 bottom-0 w-[85%] max-w-[320px] bg-white shadow-xl overflow-y-auto flex flex-col">
+                  <div className="p-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+                    <h3 className="font-bold text-gray-900">Customer Info</h3>
+                    <button 
+                      onClick={() => setIsMobileDrawerOpen(false)}
+                      className="p-2 -mr-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  <div className="p-6 text-center border-b border-gray-100 flex flex-col items-center bg-gray-50/50">
+                    <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-2xl mb-3">
+                      {selectedConv.customer.name.charAt(0)}
+                    </div>
+                    <h3 className="font-bold text-gray-900 text-lg leading-tight">{selectedConv.customer.name}</h3>
+                    <p className="text-sm text-gray-500 mt-1 capitalize">via {selectedConv.channel.type}</p>
+                    
+                    <a href={`/customers/${selectedConv.customer.externalId || selectedConv.customer.name}`} className="mt-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 text-xs font-semibold py-1.5 px-4 rounded-lg transition-colors inline-block shadow-sm">
+                      View Profile
+                    </a>
+                  </div>
+                  
+                  <div className="p-5 space-y-6 flex-1">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
+                      <CustomerTags 
+                        customerId={selectedConv.customer.id} 
+                        initialAssignedTags={selectedConv.customer.tags?.map((t: { tag: CustomerTag }) => t.tag) || []} 
+                      />
+                    </div>
+
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Notes</h4>
+                      <CustomerNotes customerId={selectedConv.customer.id} />
+                    </div>
+
+                    <div className="border-t border-gray-100 pt-5">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Lead Management</h4>
+                      <LeadControls 
+                        conversationId={selectedConv.id}
+                        status={selectedConv.status}
+                        priority={selectedConv.priority}
+                        estimatedValue={selectedConv.estimatedValue}
+                        followUpAt={selectedConv.followUpAt}
+                        followUpCompleted={selectedConv.followUpCompleted}
+                        onUpdate={handleLeadUpdate}
+                      />
+                    </div>
+
+                    {selectedConv.reason && (
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Reason</h4>
+                        <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg border border-gray-100 leading-relaxed">
+                          {selectedConv.reason}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Empty State */
+          <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 text-gray-400">
+            <svg className="w-16 h-16 mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p className="font-semibold text-gray-600 text-lg">Select a conversation</p>
+            <p className="text-sm mt-1">Choose a thread from the list to view messages</p>
+          </div>
+        )}
+      </div>
+
     </div>
+  );
+}
+
+function NavButton({ active, onClick, icon, label, count }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, count?: number }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+        active 
+          ? "bg-gray-200/60 text-gray-900" 
+          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div className={active ? "text-blue-600" : "text-gray-400"}>
+          {icon}
+        </div>
+        {label}
+      </div>
+      {count !== undefined && count > 0 && (
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${active ? "bg-white text-gray-900 shadow-sm" : "bg-gray-200 text-gray-600"}`}>
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
 export function ThreadsClient({ conversations }: { conversations: ConversationRow[] }) {
   return (
-    <Suspense fallback={<div className="text-sm text-gray-500 py-10 text-center animate-pulse">Loading threads...</div>}>
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500 animate-pulse">Loading inbox...</div>}>
       <ThreadsClientInner initialConversations={conversations} />
     </Suspense>
   );

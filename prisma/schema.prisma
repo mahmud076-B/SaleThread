@@ -3,6 +3,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -22,6 +23,17 @@ enum ConversationStatus {
   sold
   lost
   pending
+  new
+  contacted
+  interested
+  qualified
+  won
+}
+
+enum ConversationPriority {
+  normal
+  high
+  urgent
 }
 
 enum MessageSender {
@@ -61,6 +73,8 @@ model Business {
   customers    Customer[]
   conversations Conversation[]
   catalogItems ProductCatalogItem[]
+  customerNotes CustomerNote[]
+  customerTags  CustomerTag[]
 }
 
 model Channel {
@@ -90,6 +104,8 @@ model Customer {
 
   business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  notes         CustomerNote[]
+  tags          CustomerTagAssignment[]
 
   @@unique([businessId, channelType, externalId])
   @@index([businessId])
@@ -101,11 +117,14 @@ model Conversation {
   customerId     String
   channelId      String
   status         ConversationStatus
+  priority       ConversationPriority @default(normal)
   reason         String?
   estimatedValue Decimal?           @db.Decimal(10, 2)
   lastMessageAt  DateTime
 
   isUnread       Boolean            @default(true)
+  followUpAt     DateTime?
+  followUpCompleted Boolean         @default(false)
 
   business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -154,4 +173,46 @@ model FollowUpDraft {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
+}
+
+model CustomerNote {
+  id         String   @id @default(cuid())
+  businessId String
+  customerId String
+  content    String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([customerId])
+}
+
+model CustomerTag {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  color      String?
+
+  business    Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  assignments CustomerTagAssignment[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+model CustomerTagAssignment {
+  id         String   @id @default(cuid())
+  customerId String
+  tagId      String
+  createdAt  DateTime @default(now())
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tag      CustomerTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, tagId])
+  @@index([customerId])
+  @@index([tagId])
 }

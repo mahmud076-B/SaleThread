@@ -8,7 +8,7 @@ const { auth } = NextAuth(authConfig);
 const protectedRoutes = ["/today", "/threads", "/this-week"];
 const authRoutes = ["/login", "/signup"];
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const session = await auth();
 
