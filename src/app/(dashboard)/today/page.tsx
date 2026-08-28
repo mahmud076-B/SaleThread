@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import AiSalesCopilot from "./AiSalesCopilot";
 
 const CHANNEL_BADGES: Record<string, { label: string; className: string }> = {
   messenger: { label: "Messenger", className: "bg-blue-100 text-blue-700" },
@@ -53,6 +54,9 @@ export default async function TodayPage() {
     recentConversations,
     activeFollowUps,
     attentionNeeded,
+    hotLeadsCount,
+    aiPriorityLeads,
+    followUpOpportunitiesRaw,
   ] = await Promise.all([
     prisma.conversation.count({ where: { businessId: business.id } }),
     prisma.conversation.count({ where: { businessId: business.id, isUnread: true } }),
@@ -110,6 +114,36 @@ export default async function TodayPage() {
         channel: true,
       },
     }),
+    prisma.conversation.count({ where: { businessId: business.id, aiLeadTemperature: 'hot' } }),
+    prisma.conversation.findMany({
+      where: {
+        businessId: business.id,
+        aiLeadScore: { not: null }
+      },
+      orderBy: { aiLeadScore: "desc" },
+      take: 5,
+      include: {
+        customer: true,
+        channel: true,
+      },
+    }),
+    prisma.conversation.findMany({
+      where: {
+        businessId: business.id,
+        OR: [
+          { followUpAt: { lt: startOfTomorrow }, followUpCompleted: false },
+          { aiLeadTemperature: 'hot' },
+          { priority: { in: ['urgent', 'high'] } },
+          { status: { in: ['interested', 'qualified'] } }
+        ]
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      take: 20,
+      include: {
+        customer: true,
+        channel: true,
+      },
+    }),
   ]);
 
   const pipelineValue = activePipeline._sum.estimatedValue || 0;
@@ -133,14 +167,38 @@ export default async function TodayPage() {
   const todayFollowUps = activeFollowUps.filter(f => f.followUpAt! >= startOfToday && f.followUpAt! < startOfTomorrow);
   const upcomingFollowUps = activeFollowUps.filter(f => f.followUpAt! >= startOfTomorrow);
 
+  // Score follow-up opportunities based on existing fields to prioritize
+  const followUpOpportunities = followUpOpportunitiesRaw
+    .map(c => {
+      let score = 0;
+      if (c.followUpAt && !c.followUpCompleted && c.followUpAt < startOfToday) score += 50; // Overdue
+      if (c.followUpAt && !c.followUpCompleted && c.followUpAt < startOfTomorrow) score += 30; // Due today
+      if (c.aiLeadTemperature === 'hot') score += 20;
+      if (c.status === 'qualified') score += 15;
+      if (c.status === 'interested') score += 10;
+      if (c.priority === 'urgent') score += 20;
+      if (c.priority === 'high') score += 10;
+      if (c.aiLeadScore) score += (c.aiLeadScore / 10);
+      return { ...c, oppScore: score };
+    })
+    .sort((a, b) => b.oppScore - a.oppScore)
+    .slice(0, 5);
+
   return (
     <div className="w-full h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-8">
+        <AiSalesCopilot />
         
         {/* 1. DASHBOARD METRICS */}
         <section>
           <h1 className="text-xl font-bold text-gray-900 mb-4">Pipeline Overview</h1>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+            <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl border border-orange-100 p-4 shadow-sm">
+              <p className="text-xs font-bold text-orange-800 uppercase tracking-wider flex items-center gap-1">
+                <span>🔥</span> Hot Leads
+              </p>
+              <p className="text-2xl font-bold text-red-600 mt-1">{hotLeadsCount.toLocaleString()}</p>
+            </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">New Leads</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">{newLeads.toLocaleString()}</p>
@@ -175,6 +233,67 @@ export default async function TodayPage() {
             </div>
           </div>
         </section>
+
+        {/* AI PRIORITY LEADS */}
+        {aiPriorityLeads.length > 0 && (
+          <section>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <span>🔥</span> AI Priority Leads
+              </h2>
+              <Link href="/threads?leadFilter=hot" className="text-sm font-medium text-red-600 hover:text-red-700">
+                View All Hot Leads →
+              </Link>
+            </div>
+            <div className="bg-gradient-to-r from-orange-50 to-red-50 rounded-xl border border-orange-100 shadow-sm overflow-hidden flex flex-col">
+              {aiPriorityLeads.map((c, index) => {
+                const channel = CHANNEL_BADGES[c.channel.type] ?? {
+                  label: c.channel.type,
+                  className: "bg-gray-100 text-gray-700",
+                };
+                
+                return (
+                  <Link
+                    key={c.id}
+                    href={`/threads?id=${c.id}`}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-white/50 transition-colors gap-3 ${
+                      index !== aiPriorityLeads.length - 1 ? "border-b border-orange-100/50" : ""
+                    }`}
+                  >
+                    <div className="flex-1 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-bold text-gray-900">
+                          {c.customer.name}
+                        </p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${channel.className}`}>
+                          {channel.label}
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                          c.aiLeadTemperature === 'hot' ? 'bg-red-100 text-red-700 border-red-200' :
+                          c.aiLeadTemperature === 'warm' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                          'bg-blue-100 text-blue-700 border-blue-200'
+                        }`}>
+                          {c.aiLeadTemperature}
+                        </span>
+                        {c.isUnread && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-blue-100 text-blue-700">
+                            Unread
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-600 font-medium ml-1">Score: {c.aiLeadScore}</span>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-xs font-semibold text-orange-700 bg-white px-3 py-1 rounded-full shadow-sm border border-orange-100">
+                        View Lead →
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* 1.5. AI ATTENTION NEEDED */}
         {attentionNeeded.length > 0 && (
@@ -230,6 +349,96 @@ export default async function TodayPage() {
                     <div className="text-right flex-shrink-0">
                       <span className="text-xs font-semibold text-emerald-700 bg-white px-3 py-1 rounded-full shadow-sm border border-emerald-100">
                         Analyze Lead →
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* 1.7. AI FOLLOW-UP OPPORTUNITIES */}
+        {followUpOpportunities.length > 0 && (
+          <section>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <span>🤖</span> AI Follow-up Opportunities
+              </h2>
+            </div>
+            <div className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden flex flex-col">
+              {followUpOpportunities.map((c, index) => {
+                const channel = CHANNEL_BADGES[c.channel.type] ?? {
+                  label: c.channel.type,
+                  className: "bg-gray-100 text-gray-700",
+                };
+                
+                return (
+                  <Link
+                    key={c.id}
+                    href={`/threads?id=${c.id}`}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-indigo-50/30 transition-colors gap-3 ${
+                      index !== followUpOpportunities.length - 1 ? "border-b border-indigo-50" : ""
+                    }`}
+                  >
+                    <div className="flex-1 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-bold text-gray-900">
+                          {c.customer.name}
+                        </p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${channel.className}`}>
+                          {channel.label}
+                        </span>
+                        
+                        {c.status && c.status !== 'new' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-gray-100 text-gray-700">
+                            {c.status}
+                          </span>
+                        )}
+
+                        {c.aiLeadTemperature && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                            c.aiLeadTemperature === 'hot' ? 'bg-red-100 text-red-700 border-red-200' :
+                            c.aiLeadTemperature === 'warm' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                            'bg-blue-100 text-blue-700 border-blue-200'
+                          }`}>
+                            {c.aiLeadTemperature}
+                          </span>
+                        )}
+
+                        {c.priority !== 'normal' && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                            c.priority === 'urgent' ? 'bg-red-50 text-red-600 border-red-200' :
+                            'bg-orange-50 text-orange-600 border-orange-200'
+                          }`}>
+                            {c.priority}
+                          </span>
+                        )}
+
+                        {c.aiLeadScore !== null && (
+                          <span className="text-xs text-gray-600 font-medium">Score: {c.aiLeadScore}</span>
+                        )}
+
+                        {c.followUpAt && !c.followUpCompleted && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border ${
+                            c.followUpAt < startOfToday ? 'bg-red-50 text-red-700 border-red-200' :
+                            c.followUpAt < startOfTomorrow ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                            'bg-green-50 text-green-700 border-green-200'
+                          }`}>
+                            {c.followUpAt < startOfToday ? 'Overdue' : c.followUpAt < startOfTomorrow ? 'Due Today' : 'Scheduled'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1">
+                        <p className="text-[10px] text-gray-500 font-medium">Last active: {formatRelativeTime(c.lastMessageAt.toISOString())}</p>
+                        {c.estimatedValue && (
+                          <p className="text-[10px] text-gray-500 font-medium">Value: ৳{Number(c.estimatedValue).toLocaleString()}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-xs font-semibold text-indigo-700 bg-white px-3 py-1 rounded-full shadow-sm border border-indigo-100">
+                        View Lead →
                       </span>
                     </div>
                   </Link>

@@ -24,6 +24,12 @@ export default async function ThreadsPage() {
       isUnread: true,
       followUpAt: true,
       followUpCompleted: true,
+      aiLeadScore: true,
+      aiLeadTemperature: true,
+      aiLeadIntent: true,
+      aiLeadConfidence: true,
+      aiLeadReasons: true,
+      aiLeadScoredAt: true,
       customer: {
         select: {
           id: true,
@@ -49,19 +55,21 @@ export default async function ThreadsPage() {
   });
 
   // Serialise Decimal → string for client component
-  const serialised = conversations.map((c) => ({
+  const formattedConversations = conversations.map((c) => ({
     ...c,
     estimatedValue: c.estimatedValue ? c.estimatedValue.toString() : null,
-    lastMessageAt: c.lastMessageAt.toISOString(),
-    isUnread: c.isUnread,
     followUpAt: c.followUpAt ? c.followUpAt.toISOString() : null,
-    followUpCompleted: c.followUpCompleted,
-    messages: c.messages.map((m) => ({ ...m, sentAt: m.sentAt.toISOString() })),
+    lastMessageAt: c.messages[0]?.sentAt?.toISOString() || new Date().toISOString(),
+    messages: c.messages.map((m) => ({
+      ...m,
+      sentAt: m.sentAt.toISOString(),
+    })),
+    aiLeadScoredAt: c.aiLeadScoredAt ? c.aiLeadScoredAt.toISOString() : null,
   }));
 
   return (
     <div className="w-full h-full bg-white">
-      <ThreadsClient conversations={serialised} />
+      <ThreadsClient conversations={formattedConversations as any} />
     </div>
   );
 }

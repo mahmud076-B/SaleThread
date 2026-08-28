@@ -297,4 +297,405 @@ STRICT RULES:
   }
 }
 
+export type SalesBrief = {
+  overview: string;
+  priorityActions: Array<{
+    conversationId: string;
+    customerName: string;
+    action: string;
+    reason: string;
+  }>;
+  followUps: Array<{
+    conversationId: string;
+    customerName: string;
+    action: string;
+    timing: string;
+  }>;
+  opportunities: Array<{
+    conversationId: string | null;
+    title: string;
+    explanation: string;
+  }>;
+  risks: Array<{
+    conversationId: string | null;
+    title: string;
+    explanation: string;
+  }>;
+  finalSummary: string;
+};
 
+export async function generateSalesBrief(conversationsData: any): Promise<SalesBrief> {
+  if (!openai) {
+    throw new Error("OpenAI API key is not configured.");
+  }
+
+  const prompt = `ROLE:
+You are a sales intelligence assistant.
+
+TASK:
+Analyze the provided sales activity and conversations to produce a Daily Sales Brief.
+
+CONVERSATION DATA:
+${JSON.stringify(conversationsData, null, 2)}
+
+RULES:
+1. Analyze ONLY the supplied conversation/business data.
+2. Never invent customer information, prices, discounts, policies, or delivery dates.
+3. Never assume a customer will purchase.
+4. If information is missing, explicitly treat it as unknown.
+5. Do not create customer-facing messages.
+6. Identify actionable sales priorities from the available data.
+7. Prioritize unread conversations, interested/qualified leads, high/urgent priority conversations, overdue and today's follow-ups.
+8. Consider recent activity.
+9. Keep recommendations concise and practical.
+10. Return strictly valid JSON according to the schema.
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.6-luna",
+      messages: [
+        { role: "system", content: prompt }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "sales_brief",
+          schema: {
+            type: "object",
+            properties: {
+              overview: { type: "string", description: "Short 1-3 sentence summary of today's overall sales activity." },
+              priorityActions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    conversationId: { type: "string" },
+                    customerName: { type: "string" },
+                    action: { type: "string", description: "Action to take" },
+                    reason: { type: "string", description: "Reason for this priority" }
+                  },
+                  required: ["conversationId", "customerName", "action", "reason"],
+                  additionalProperties: false
+                },
+                description: "List of the most urgent or important actions to take today."
+              },
+              followUps: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    conversationId: { type: "string" },
+                    customerName: { type: "string" },
+                    action: { type: "string" },
+                    timing: { type: "string", description: "e.g., 'Overdue', 'Today', 'Upcoming'" }
+                  },
+                  required: ["conversationId", "customerName", "action", "timing"],
+                  additionalProperties: false
+                },
+                description: "List of recommended or scheduled follow-ups."
+              },
+              opportunities: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    conversationId: { type: ["string", "null"] },
+                    title: { type: "string" },
+                    explanation: { type: "string" }
+                  },
+                  required: ["conversationId", "title", "explanation"],
+                  additionalProperties: false
+                },
+                description: "List of promising conversations or opportunities."
+              },
+              risks: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    conversationId: { type: ["string", "null"] },
+                    title: { type: "string" },
+                    explanation: { type: "string" }
+                  },
+                  required: ["conversationId", "title", "explanation"],
+                  additionalProperties: false
+                },
+                description: "List of at-risk conversations or lost deals."
+              },
+              finalSummary: { type: "string", description: "A short, actionable concluding summary." }
+            },
+            required: ["overview", "priorityActions", "followUps", "opportunities", "risks", "finalSummary"],
+            additionalProperties: false
+          },
+          strict: true
+        }
+      }
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("Empty response from OpenAI");
+    
+    return JSON.parse(content) as SalesBrief;
+  } catch (error) {
+    console.error("OpenAI Error:", error);
+    throw new Error("Failed to generate sales brief.");
+  }
+}
+
+export type LeadScoreResult = {
+  score: number;
+  temperature: "hot" | "warm" | "cold" | "unknown";
+  buyingIntent: "high" | "medium" | "low" | "unknown";
+  confidence: "high" | "medium" | "low";
+  reasons: string[];
+  recommendedPriority: "urgent" | "high" | "normal";
+};
+
+export async function generateLeadScore(messages: MessageContext[]): Promise<LeadScoreResult> {
+  if (!openai) {
+    throw new Error("OpenAI API key is not configured.");
+  }
+
+  const conversationContext = messages.map(msg => `${msg.sender === 'business' ? 'Agent' : 'Customer'}: ${msg.content}`).join("\n");
+
+  const prompt = `ROLE:
+You are a sales intelligence assistant.
+
+TASK:
+Analyze the following customer/business conversation and assign a lead score from 0-100 indicating how likely the customer is to become a buyer.
+
+CONVERSATION HISTORY (oldest to newest):
+${conversationContext}
+
+STRICT RULES:
+1. NEVER invent facts, prices, discounts, policies, delivery dates, stock, customer information, product information, or purchase history. Use ONLY information explicitly present in the conversation.
+2. If evidence is insufficient, set temperature="unknown", buyingIntent="unknown", and confidence="low" or "medium".
+3. Consider explicit buying signals: asking price, asking how to order, asking delivery info, asking payment method, asking availability, asking product details before purchase, confirming purchase intention, asking for discount before purchase.
+4. Consider negative signals: explicitly saying they are not interested, clearly rejecting the product, complaint without purchase intent, only requesting generic info, no meaningful buying intent, long inactive conversation.
+5. Do NOT treat normal politeness as purchase intent.
+6. MATCH THE CUSTOMER'S LANGUAGE internally when interpreting Bangla, English, or Banglish.
+7. Output valid JSON adhering to the schema.
+8. Do not generate a customer-facing response.
+9. "reasons" should be concise factual bullet points.
+
+TEMPERATURE DEFINITIONS:
+HOT: Strong and recent purchase intent.
+WARM: Meaningful interest but purchase is not confirmed.
+COLD: Weak or absent current buying intent.
+UNKNOWN: Not enough evidence.
+
+SCORE INTERPRETATION:
+90-100 = Very strong purchase intent
+75-89 = Strong purchase intent
+50-74 = Moderate potential
+25-49 = Weak potential
+0-24 = Very low potential
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.6-luna",
+      messages: [
+        { role: "system", content: prompt }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "lead_score",
+          schema: {
+            type: "object",
+            properties: {
+              score: { type: "integer", description: "Lead score from 0 to 100 based on the conversation." },
+              temperature: { 
+                type: "string", 
+                enum: ["hot", "warm", "cold", "unknown"],
+                description: "Assessed lead temperature."
+              },
+              buyingIntent: { 
+                type: "string", 
+                enum: ["high", "medium", "low", "unknown"],
+                description: "Assessed buying intent."
+              },
+              confidence: { 
+                type: "string", 
+                enum: ["high", "medium", "low"],
+                description: "Confidence in the assessment."
+              },
+              reasons: { 
+                type: "array", 
+                items: { type: "string" },
+                description: "Concise factual reasons for the score."
+              },
+              recommendedPriority: { 
+                type: "string", 
+                enum: ["urgent", "high", "normal"],
+                description: "Recommended priority level."
+              }
+            },
+            required: ["score", "temperature", "buyingIntent", "confidence", "reasons", "recommendedPriority"],
+            additionalProperties: false
+          },
+          strict: true
+        }
+      }
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("Empty response from OpenAI");
+    
+    return JSON.parse(content) as LeadScoreResult;
+  } catch (error) {
+    console.error("OpenAI Error:", error);
+    throw new Error("Failed to generate lead score.");
+  }
+}
+
+export type FollowUpRecommendation = {
+  shouldFollowUp: boolean;
+  urgency: "urgent" | "high" | "normal" | "low";
+  suggestedTimeframe: string;
+  suggestedFollowUpAt: string | null;
+  reason: string;
+  recommendedAction: string;
+};
+
+export async function generateFollowUpRecommendation(
+  messages: MessageContext[],
+  leadContext: any
+): Promise<FollowUpRecommendation> {
+  if (!openai) {
+    throw new Error("OpenAI API key is not configured.");
+  }
+
+  const conversationContext = messages.map(msg => `${msg.sender === 'business' ? 'Agent' : 'Customer'}: ${msg.content}`).join("\n");
+
+  const prompt = `ROLE:
+You are an internal sales assistant advising the business on follow-up timing.
+
+TASK:
+Analyze the conversation and lead context to recommend if and when a follow-up is needed.
+
+LEAD CONTEXT:
+${JSON.stringify(leadContext, null, 2)}
+
+CONVERSATION HISTORY (oldest to newest):
+${conversationContext}
+
+RULES:
+1. NEVER invent facts, prices, discounts, delivery dates, policies, or product information.
+2. If there are no clear facts, clearly indicate uncertainty.
+3. This is an INTERNAL recommendation. Do not write a customer-facing message.
+4. Return strict JSON.
+5. suggestedFollowUpAt must be an ISO-8601 datetime string, or null if no specific time is suggested.
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.6-luna",
+      messages: [
+        { role: "system", content: prompt }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "followup_recommendation",
+          schema: {
+            type: "object",
+            properties: {
+              shouldFollowUp: { type: "boolean", description: "Whether a follow-up is recommended." },
+              urgency: {
+                type: "string",
+                enum: ["urgent", "high", "normal", "low"],
+                description: "Urgency of the follow-up."
+              },
+              suggestedTimeframe: { type: "string", description: "Human readable timeframe (e.g., 'within 24 hours')." },
+              suggestedFollowUpAt: { type: ["string", "null"], description: "ISO datetime string if a specific time is recommended, else null." },
+              reason: { type: "string", description: "Reason for the recommendation." },
+              recommendedAction: { type: "string", description: "Actionable advice for the agent." }
+            },
+            required: ["shouldFollowUp", "urgency", "suggestedTimeframe", "suggestedFollowUpAt", "reason", "recommendedAction"],
+            additionalProperties: false
+          },
+          strict: true
+        }
+      }
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("Empty response from OpenAI");
+
+    return JSON.parse(content) as FollowUpRecommendation;
+  } catch (error) {
+    console.error("OpenAI Error:", error);
+    throw new Error("Failed to generate follow-up recommendation.");
+  }
+}
+
+export async function generateFollowUpDraft(
+  messages: MessageContext[],
+  leadContext: any,
+  recommendation: any
+): Promise<{ draft: string }> {
+  if (!openai) {
+    throw new Error("OpenAI API key is not configured.");
+  }
+
+  const conversationContext = messages.map(msg => `${msg.sender === 'business' ? 'Agent' : 'Customer'}: ${msg.content}`).join("\n");
+
+  const prompt = `ROLE:
+You are a professional sales and customer support assistant.
+
+TASK:
+Draft exactly ONE short, natural, and highly effective follow-up message the agent can send to the customer.
+
+LEAD CONTEXT:
+${JSON.stringify(leadContext, null, 2)}
+
+AI RECOMMENDATION ALREADY MADE:
+${JSON.stringify(recommendation, null, 2)}
+
+CONVERSATION HISTORY (oldest to newest):
+${conversationContext}
+
+CRITICAL RULES:
+1. NEVER invent facts, prices, discounts, delivery dates, or policies. Only use information explicitly present.
+2. NEVER mention that you are an AI or mention internal lead scores.
+3. MATCH THE CUSTOMER'S LANGUAGE perfectly (Bangla, English, or Banglish).
+4. Keep the draft concise and natural for a Messenger/Instagram chat.
+5. Do not include placeholders like "[Your Name]". Write the exact text the agent can send.
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.6-luna",
+      messages: [
+        { role: "system", content: prompt }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "followup_draft",
+          schema: {
+            type: "object",
+            properties: {
+              draft: { type: "string", description: "The exact suggested follow-up message text." }
+            },
+            required: ["draft"],
+            additionalProperties: false
+          },
+          strict: true
+        }
+      }
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("Empty response from OpenAI");
+
+    const parsed = JSON.parse(content);
+    return { draft: parsed.draft };
+  } catch (error) {
+    console.error("OpenAI Error:", error);
+    throw new Error("Failed to generate follow-up draft.");
+  }
+}

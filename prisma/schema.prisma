@@ -125,6 +125,13 @@ model Conversation {
   followUpAt     DateTime?
   followUpCompleted Boolean         @default(false)
 
+  aiLeadScore       Int?
+  aiLeadTemperature String?
+  aiLeadIntent      String?
+  aiLeadConfidence  String?
+  aiLeadReasons     Json?
+  aiLeadScoredAt    DateTime?
+
   business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)

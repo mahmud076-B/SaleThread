@@ -20,6 +20,12 @@ type ConversationRow = {
   customer: { id: string; name: string; externalId: string; tags: { tag: CustomerTag }[] };
   channel: { type: ChannelType; displayName: string };
   messages: { id: string; content: string; sender: string; sentAt: string; isFailed?: boolean }[];
+  aiLeadScore: number | null;
+  aiLeadTemperature: string | null;
+  aiLeadIntent: string | null;
+  aiLeadConfidence: string | null;
+  aiLeadReasons: any | null;
+  aiLeadScoredAt: string | null;
 };
 
 function formatRelativeTime(isoString: string) {
@@ -48,6 +54,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const [activeStatus, setActiveStatus] = useState<ConversationStatus | "all">("all");
   const [channelFilter, setChannelFilter] = useState<ChannelType | "all">("all");
   const [readStatus, setReadStatus] = useState<"all" | "unread" | "read">("all");
+  const [leadFilter, setLeadFilter] = useState<"all" | "hot">("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(idParam);
   
@@ -78,6 +85,17 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
   const [leadIntelligence, setLeadIntelligence] = useState<any | null>(null);
   const [isLeadIntelligenceLoading, setIsLeadIntelligenceLoading] = useState(false);
   const [leadIntelligenceError, setLeadIntelligenceError] = useState<string | null>(null);
+
+  // Phase 5 AI Lead Scoring State
+  const [isScoringLoading, setIsScoringLoading] = useState(false);
+  const [scoringError, setScoringError] = useState<string | null>(null);
+
+  // Phase 6 AI Follow-up State
+  const [followUpRecommendation, setFollowUpRecommendation] = useState<any | null>(null);
+  const [isFollowUpLoading, setIsFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [isFollowUpDraftLoading, setIsFollowUpDraftLoading] = useState(false);
+  const [followUpDraftError, setFollowUpDraftError] = useState<string | null>(null);
 
   // Sync state if props change (e.g. Next.js refresh)
   useEffect(() => {
@@ -116,6 +134,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
       const matchRead = readStatus === "all" 
         ? true 
         : readStatus === "unread" ? c.isUnread : !c.isUnread;
+      const matchLead = leadFilter === "all" || c.aiLeadTemperature === "hot";
 
       const q = search.toLowerCase();
       const matchSearch =
@@ -124,7 +143,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
         (c.customer.externalId && c.customer.externalId.toLowerCase().includes(q)) ||
         c.messages.some((m) => m.content.toLowerCase().includes(q));
 
-      return matchStatus && matchChannel && matchRead && matchSearch;
+      return matchStatus && matchChannel && matchRead && matchLead && matchSearch;
     });
 
     result.sort((a, b) => {
@@ -134,7 +153,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
     });
 
     return result;
-  }, [conversations, activeStatus, channelFilter, readStatus, search]);
+  }, [conversations, activeStatus, channelFilter, readStatus, leadFilter, search]);
 
 
 
@@ -298,6 +317,91 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
     }
   };
 
+  const handleScoreLead = async (conversationId: string) => {
+    if (isScoringLoading) return;
+    setIsScoringLoading(true);
+    setScoringError(null);
+    
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/score`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI scoring is temporarily unavailable.");
+      }
+      
+      // Update local state
+      handleLeadUpdate({
+        aiLeadScore: data.data.score,
+        aiLeadTemperature: data.data.temperature,
+        aiLeadIntent: data.data.buyingIntent,
+        aiLeadConfidence: data.data.confidence,
+        aiLeadReasons: data.data.reasons,
+        aiLeadScoredAt: data.data.scoredAt,
+      });
+    } catch (err: any) {
+      setScoringError(err.message || "AI scoring is temporarily unavailable.");
+    } finally {
+      setIsScoringLoading(false);
+    }
+  };
+
+  const handleRecommendFollowUp = async (conversationId: string) => {
+    if (isFollowUpLoading) return;
+    setIsFollowUpLoading(true);
+    setFollowUpError(null);
+    setFollowUpRecommendation(null);
+    
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/follow-up`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI follow-up recommendation is temporarily unavailable.");
+      }
+      
+      setFollowUpRecommendation(data.data);
+    } catch (err: any) {
+      setFollowUpError(err.message || "AI follow-up recommendation is temporarily unavailable.");
+    } finally {
+      setIsFollowUpLoading(false);
+    }
+  };
+
+  const handleDraftFollowUp = async (conversationId: string) => {
+    if (isFollowUpDraftLoading) return;
+    setIsFollowUpDraftLoading(true);
+    setFollowUpDraftError(null);
+    
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/follow-up-draft`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "AI follow-up draft is temporarily unavailable.");
+      }
+      
+      setReplyText(data.data.draft);
+      // Focus textarea if we can find it
+      const textarea = document.querySelector('textarea[placeholder="Message..."]') as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.focus();
+        textarea.style.height = 'inherit';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
+      }
+    } catch (err: any) {
+      setFollowUpDraftError(err.message || "AI follow-up draft is temporarily unavailable.");
+    } finally {
+      setIsFollowUpDraftLoading(false);
+    }
+  };
+
   const selectedConv = conversations.find(c => c.id === expandedId);
 
   return (
@@ -366,10 +470,19 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
             />
             <NavButton 
               active={activeStatus === "lost"} 
-              onClick={() => { setActiveStatus("lost"); setReadStatus("all"); }} 
+              onClick={() => { setActiveStatus("lost"); setReadStatus("all"); setLeadFilter("all"); }} 
               icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} 
               label="Lost" 
             />
+            <div className="pt-2 mt-2 border-t border-gray-200">
+              <NavButton 
+                active={leadFilter === "hot"} 
+                onClick={() => setLeadFilter(leadFilter === "hot" ? "all" : "hot")} 
+                icon={<span className="text-sm">🔥</span>} 
+                label="Hot Leads" 
+                count={conversations.filter(c => c.aiLeadTemperature === "hot").length}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -419,6 +532,9 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       setInsightsError(null);
                       setLeadIntelligence(null);
                       setLeadIntelligenceError(null);
+                      setFollowUpRecommendation(null);
+                      setFollowUpError(null);
+                      setFollowUpDraftError(null);
                       if (c.isUnread) markAsRead(c.id);
                     }}
                     className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50/40 relative' : ''}`}
@@ -430,6 +546,14 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                         <p className={`text-sm truncate ${c.isUnread && !isActive ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
                           {c.customer.name}
                         </p>
+                        {c.aiLeadTemperature === 'hot' && <span title="Hot Lead" className="text-[10px]">🔥</span>}
+                        {c.aiLeadTemperature === 'warm' && <span title="Warm Lead" className="text-[10px]">🟡</span>}
+                        {c.followUpAt && !c.followUpCompleted && (
+                          <span title="Follow-up scheduled" className="text-[10px]">
+                            {new Date(c.followUpAt) < new Date() ? '🔴' : 
+                             new Date(c.followUpAt).toDateString() === new Date().toDateString() ? '🟠' : '🟢'}
+                          </span>
+                        )}
                       </div>
                       <span className="text-[11px] text-gray-500 whitespace-nowrap ml-2 flex-shrink-0">
                         {formatRelativeTime(c.lastMessageAt)}
@@ -481,6 +605,9 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       setInsightsError(null);
                       setLeadIntelligence(null);
                       setLeadIntelligenceError(null);
+                      setFollowUpRecommendation(null);
+                      setFollowUpError(null);
+                      setFollowUpDraftError(null);
                     }}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -777,6 +904,107 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                   )}
                 </div>
 
+                {/* AI Lead Scoring */}
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Lead Scoring</h4>
+                  
+                  {(!selectedConv.aiLeadScore && !isScoringLoading && !scoringError) && (
+                    <button
+                      onClick={() => handleScoreLead(selectedConv.id)}
+                      className="w-full bg-gradient-to-r from-orange-400 to-red-500 hover:from-orange-500 hover:to-red-600 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      ✨ Generate Lead Score
+                    </button>
+                  )}
+
+                  {isScoringLoading && (
+                    <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                      <svg className="animate-spin h-5 w-5 text-orange-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span className="text-sm font-medium text-gray-600">Scoring...</span>
+                    </div>
+                  )}
+
+                  {scoringError && (
+                    <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                      <span className="text-xs text-red-700">{scoringError}</span>
+                      <button onClick={() => handleScoreLead(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedConv.aiLeadScore !== null && selectedConv.aiLeadTemperature && (
+                    <div className="w-full bg-white rounded-xl border border-orange-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="bg-gradient-to-r from-orange-50 to-red-50 px-3 py-2 border-b border-orange-100 flex items-center justify-between">
+                        <span className="text-xs font-bold text-orange-800 tracking-wide">✨ AI Lead Score</span>
+                        <span className="text-[10px] text-gray-500">
+                          {formatRelativeTime(selectedConv.aiLeadScoredAt!)}
+                        </span>
+                      </div>
+                      <div className="p-3 space-y-4">
+                        <div className="flex gap-4">
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Score</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">
+                                {selectedConv.aiLeadScore >= 80 ? '🔥' : selectedConv.aiLeadScore >= 50 ? '🟡' : '🔵'}
+                              </span>
+                              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${selectedConv.aiLeadScore >= 80 ? 'bg-red-500' : selectedConv.aiLeadScore >= 50 ? 'bg-orange-400' : 'bg-blue-400'}`} style={{ width: `${selectedConv.aiLeadScore}%` }} />
+                              </div>
+                              <span className="text-xs font-bold text-gray-900">{selectedConv.aiLeadScore}/100</span>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Temp</p>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                              selectedConv.aiLeadTemperature === 'hot' ? 'bg-red-50 text-red-700 border-red-200' :
+                              selectedConv.aiLeadTemperature === 'warm' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                              selectedConv.aiLeadTemperature === 'cold' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                              'bg-gray-50 text-gray-600 border-gray-200'
+                            }`}>
+                              {selectedConv.aiLeadTemperature}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Intent</p>
+                            <span className="text-xs font-semibold text-gray-800 capitalize">{selectedConv.aiLeadIntent}</span>
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Confidence</p>
+                            <span className="text-xs font-semibold text-gray-800 capitalize">{selectedConv.aiLeadConfidence}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Key Reasons</p>
+                          {selectedConv.aiLeadReasons && Array.isArray(selectedConv.aiLeadReasons) && selectedConv.aiLeadReasons.length > 0 ? (
+                            <ul className="list-disc pl-3 text-xs text-gray-800 space-y-1">
+                              {selectedConv.aiLeadReasons.map((r: string, i: number) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500 italic">No specific reasons provided.</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="border-t border-gray-100 p-2 bg-gray-50">
+                        <button
+                          onClick={() => handleScoreLead(selectedConv.id)}
+                          disabled={isScoringLoading}
+                          className="w-full text-xs font-medium text-gray-600 hover:text-gray-900 py-1 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                        >
+                          ↻ Re-score Lead
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* AI Lead Intelligence */}
                 <div>
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Lead Intelligence</h4>
@@ -921,6 +1149,117 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                   )}
                 </div>
 
+                {/* AI Follow-up */}
+                <div>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">AI Follow-up</h4>
+                  
+                  {(!followUpRecommendation && !isFollowUpLoading && !followUpError) && (
+                    <button
+                      onClick={() => handleRecommendFollowUp(selectedConv.id)}
+                      className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      ✨ Recommend Follow-up
+                    </button>
+                  )}
+
+                  {isFollowUpLoading && (
+                    <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                      <svg className="animate-spin h-5 w-5 text-blue-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span className="text-sm font-medium text-gray-600">Analyzing...</span>
+                    </div>
+                  )}
+
+                  {followUpError && (
+                    <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                      <span className="text-xs text-red-700">{followUpError}</span>
+                      <button onClick={() => handleRecommendFollowUp(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {followUpRecommendation && (
+                    <div className="w-full bg-white rounded-xl border border-blue-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-2 border-b border-blue-100 flex items-center justify-between">
+                        <span className="text-xs font-bold text-blue-800 tracking-wide">✨ AI Follow-up Recommendation</span>
+                      </div>
+                      <div className="p-3 space-y-4">
+                        {followUpRecommendation.shouldFollowUp ? (
+                          <>
+                            <div className="flex gap-4">
+                              <div className="flex-1">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Should Follow Up</p>
+                                <span className="text-xs font-bold text-green-700">Yes</span>
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Urgency</p>
+                                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                  followUpRecommendation.urgency === 'urgent' ? 'bg-red-50 text-red-700 border-red-200' :
+                                  followUpRecommendation.urgency === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                  'bg-blue-50 text-blue-700 border-blue-200'
+                                }`}>
+                                  {followUpRecommendation.urgency}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Suggested Time</p>
+                              <p className="text-xs font-bold text-gray-900">{followUpRecommendation.suggestedTimeframe}</p>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Reason</p>
+                              <p className="text-xs text-gray-800 leading-relaxed">{followUpRecommendation.reason}</p>
+                            </div>
+
+                            <div className="bg-blue-50 -mx-3 -mb-3 p-3 border-t border-blue-100">
+                              <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Recommended Action</p>
+                              <p className="text-xs text-blue-900 font-medium leading-relaxed">{followUpRecommendation.recommendedAction}</p>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center py-2">
+                            <p className="text-xs font-medium text-gray-600">No immediate follow-up recommended.</p>
+                            <p className="text-[10px] text-gray-500 mt-1">{followUpRecommendation.reason}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {followUpRecommendation.shouldFollowUp && (
+                        <div className="border-t border-gray-100 p-3 bg-gray-50 flex flex-col gap-2">
+                          <button
+                            onClick={() => {
+                              if (followUpRecommendation.suggestedFollowUpAt) {
+                                handleLeadUpdate({ followUpAt: followUpRecommendation.suggestedFollowUpAt, followUpCompleted: false });
+                              }
+                              const el = document.getElementById("lead-controls");
+                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className="w-full text-xs font-bold bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 py-1.5 rounded-lg transition-colors shadow-sm"
+                          >
+                            Schedule Follow-up
+                          </button>
+                          
+                          <button
+                            onClick={() => handleDraftFollowUp(selectedConv.id)}
+                            disabled={isFollowUpDraftLoading}
+                            className="w-full text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 py-1.5 rounded-lg transition-colors shadow-sm flex justify-center items-center gap-2 disabled:opacity-50"
+                          >
+                            {isFollowUpDraftLoading ? (
+                              <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            ) : "✨ Draft Follow-up Message"}
+                          </button>
+                          
+                          {followUpDraftError && (
+                            <p className="text-[10px] text-red-600 text-center mt-1">{followUpDraftError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
                   <CustomerTags 
@@ -934,7 +1273,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                   <CustomerNotes customerId={selectedConv.customer.id} />
                 </div>
 
-                <div className="border-t border-gray-100 pt-5">
+                <div id="lead-controls" className="border-t border-gray-100 pt-5">
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Lead Management</h4>
                   <LeadControls 
                     conversationId={selectedConv.id}
@@ -1237,6 +1576,117 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       )}
                     </div>
 
+                    {/* AI Follow-up (Mobile) */}
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">AI Follow-up</h4>
+                      
+                      {(!followUpRecommendation && !isFollowUpLoading && !followUpError) && (
+                        <button
+                          onClick={() => handleRecommendFollowUp(selectedConv.id)}
+                          className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+                        >
+                          ✨ Recommend Follow-up
+                        </button>
+                      )}
+
+                      {isFollowUpLoading && (
+                        <div className="w-full flex items-center justify-center py-4 bg-gray-50 rounded-lg border border-gray-100">
+                          <svg className="animate-spin h-5 w-5 text-blue-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          <span className="text-sm font-medium text-gray-600">Analyzing...</span>
+                        </div>
+                      )}
+
+                      {followUpError && (
+                        <div className="w-full p-3 bg-red-50 rounded-lg border border-red-100 flex flex-col items-center gap-2 text-center">
+                          <span className="text-xs text-red-700">{followUpError}</span>
+                          <button onClick={() => handleRecommendFollowUp(selectedConv.id)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {followUpRecommendation && (
+                        <div className="w-full bg-white rounded-xl border border-blue-100 shadow-sm overflow-hidden flex flex-col">
+                          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-2 border-b border-blue-100 flex items-center justify-between">
+                            <span className="text-xs font-bold text-blue-800 tracking-wide">✨ AI Follow-up Recommendation</span>
+                          </div>
+                          <div className="p-3 space-y-4">
+                            {followUpRecommendation.shouldFollowUp ? (
+                              <>
+                                <div className="flex gap-4">
+                                  <div className="flex-1">
+                                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Should Follow Up</p>
+                                    <span className="text-xs font-bold text-green-700">Yes</span>
+                                  </div>
+                                  <div className="flex-1">
+                                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Urgency</p>
+                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                      followUpRecommendation.urgency === 'urgent' ? 'bg-red-50 text-red-700 border-red-200' :
+                                      followUpRecommendation.urgency === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                      'bg-blue-50 text-blue-700 border-blue-200'
+                                    }`}>
+                                      {followUpRecommendation.urgency}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Suggested Time</p>
+                                  <p className="text-xs font-bold text-gray-900">{followUpRecommendation.suggestedTimeframe}</p>
+                                </div>
+
+                                <div>
+                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Reason</p>
+                                  <p className="text-xs text-gray-800 leading-relaxed">{followUpRecommendation.reason}</p>
+                                </div>
+
+                                <div className="bg-blue-50 -mx-3 -mb-3 p-3 border-t border-blue-100">
+                                  <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">Recommended Action</p>
+                                  <p className="text-xs text-blue-900 font-medium leading-relaxed">{followUpRecommendation.recommendedAction}</p>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="text-center py-2">
+                                <p className="text-xs font-medium text-gray-600">No immediate follow-up recommended.</p>
+                                <p className="text-[10px] text-gray-500 mt-1">{followUpRecommendation.reason}</p>
+                              </div>
+                            )}
+                          </div>
+
+                          {followUpRecommendation.shouldFollowUp && (
+                            <div className="border-t border-gray-100 p-3 bg-gray-50 flex flex-col gap-2">
+                              <button
+                                onClick={() => {
+                                  if (followUpRecommendation.suggestedFollowUpAt) {
+                                    handleLeadUpdate({ followUpAt: followUpRecommendation.suggestedFollowUpAt, followUpCompleted: false });
+                                  }
+                                  const el = document.getElementById("lead-controls");
+                                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                                }}
+                                className="w-full text-xs font-bold bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 py-1.5 rounded-lg transition-colors shadow-sm"
+                              >
+                                Schedule Follow-up
+                              </button>
+                              
+                              <button
+                                onClick={() => handleDraftFollowUp(selectedConv.id)}
+                                disabled={isFollowUpDraftLoading}
+                                className="w-full text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 py-1.5 rounded-lg transition-colors shadow-sm flex justify-center items-center gap-2 disabled:opacity-50"
+                              >
+                                {isFollowUpDraftLoading ? (
+                                  <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                ) : "✨ Draft Follow-up Message"}
+                              </button>
+                              
+                              {followUpDraftError && (
+                                <p className="text-[10px] text-red-600 text-center mt-1">{followUpDraftError}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     <div>
                       <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
                       <CustomerTags 
@@ -1250,7 +1700,7 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                       <CustomerNotes customerId={selectedConv.customer.id} />
                     </div>
 
-                    <div className="border-t border-gray-100 pt-5">
+                    <div id="lead-controls" className="border-t border-gray-100 pt-5">
                       <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Lead Management</h4>
                       <LeadControls 
                         conversationId={selectedConv.id}
