@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import type { ChannelType, ConversationStatus } from "@prisma/client";
 import { CustomerNotes } from "@/components/CustomerNotes";
 import { CustomerTags } from "@/components/CustomerTags";
+import { CustomerMemoryClient } from "./CustomerMemoryClient";
 
 export const metadata = {
   title: "Customer Details | SaleThread",
@@ -160,6 +161,8 @@ export default async function CustomerDetailPage({
             </div>
           </div>
         </div>
+
+        <CustomerMemoryClient customerId={customer.id} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Tags */}

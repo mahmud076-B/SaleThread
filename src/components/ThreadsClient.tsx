@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { CustomerNotes } from "@/components/CustomerNotes";
 import { CustomerTags } from "@/components/CustomerTags";
 import { LeadControls } from "@/components/LeadControls";
+import { CustomerMemoryClient } from "@/app/(dashboard)/customers/[customerId]/CustomerMemoryClient";
 import type { ConversationStatus, ConversationPriority, ChannelType, CustomerTag } from "@prisma/client";
 
 type ConversationRow = {
@@ -1261,6 +1262,10 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                 </div>
 
                 <div>
+                  <CustomerMemoryClient customerId={selectedConv.customer.id} />
+                </div>
+
+                <div>
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
                   <CustomerTags 
                     customerId={selectedConv.customer.id} 
@@ -1685,6 +1690,10 @@ function ThreadsClientInner({ initialConversations }: { initialConversations: Co
                           )}
                         </div>
                       )}
+                    </div>
+
+                    <div>
+                      <CustomerMemoryClient customerId={selectedConv.customer.id} />
                     </div>
 
                     <div>
